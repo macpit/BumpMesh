@@ -49,6 +49,8 @@ import { buildUnfold, unfoldPlaces, fitUnfoldTiling } from './unfold.js';
 import { buildOutlineWrap, outlineWrapPlaces } from './outlineWrap.js';
 import { QuantizedPointMap } from './meshIndex.js';
 import { APP_VERSION } from './version.js';
+import { initMenuBar } from './menuBar.js';
+import { listRecent, addRecent, getRecent, clearRecent } from './recentFiles.js';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -1197,12 +1199,25 @@ populateLanguageSelector();
 })();
 
 // Theme toggle
-document.getElementById('theme-toggle').addEventListener('click', () => {
-  const isLight = document.documentElement.getAttribute('data-theme') !== 'light';
-  document.documentElement.setAttribute('data-theme', isLight ? 'light' : 'dark');
-  localStorage.setItem('stlt-theme', isLight ? 'light' : 'dark');
-  setViewerTheme(isLight);
-});
+// Theme selector (Info ▸ Settings)
+function _syncThemeButtons() {
+  const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  for (const b of document.querySelectorAll('.theme-opt')) {
+    const on = b.dataset.themeSet === cur;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+  }
+}
+for (const b of document.querySelectorAll('.theme-opt')) {
+  b.addEventListener('click', () => {
+    const light = b.dataset.themeSet === 'light';
+    document.documentElement.setAttribute('data-theme', light ? 'light' : 'dark');
+    try { localStorage.setItem('stlt-theme', light ? 'light' : 'dark'); } catch { /* private mode */ }
+    setViewerTheme(light);
+    _syncThemeButtons();
+  });
+}
+_syncThemeButtons();
 
 // Favourites grid + texture gallery. Every preset is selectable right away (the full texture
 // loads on demand), so PRESETS is filled synchronously instead of waiting for thumbnails.
@@ -1515,10 +1530,7 @@ function wireEvents() {
     const file = e.target.files[0];
     if (!file) return;
     e.target.value = '';
-    // macOS pickers ignore the accept filter, so check the type here too (#124).
-    if (/\.bumpmesh$/i.test(file.name)) { importProject(file).catch(err => alert(t('alerts.importFailed', { msg: err.message }))); return; }
-    if (!MODEL_FILE_RE.test(file.name)) { alert(t('alerts.unsupportedModelType', { name: file.name })); return; }
-    handleModelFile(file);
+    openUserFile(file);
   });
 
   // Drag & drop on the viewport section
@@ -1531,10 +1543,8 @@ function wireEvents() {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
     const files = [...e.dataTransfer.files];
-    const bmFile = files.find(f => /\.bumpmesh$/i.test(f.name));
-    if (bmFile) { importProject(bmFile).catch(err => alert(t('alerts.importFailed', { msg: err.message }))); return; }
-    const file = files.find(f => MODEL_FILE_RE.test(f.name));
-    if (file) handleModelFile(file);
+    const file = files.find(f => /\.bumpmesh$/i.test(f.name)) || files.find(f => MODEL_FILE_RE.test(f.name));
+    if (file) openUserFile(file);
     else if (files.length) alert(t('alerts.unsupportedModelType', { name: files[0].name }));
   });
 
@@ -1898,9 +1908,26 @@ function wireEvents() {
     clearDiagHighlight();
   });
 
-  // ── Support banner dismiss ──
-  document.getElementById('store-cta-dismiss').addEventListener('click', () => {
-    document.getElementById('store-cta-wrapper').classList.add('store-cta-hidden');
+  // ── About ──
+  const aboutOverlay = document.getElementById('about-overlay');
+  document.getElementById('about-link').addEventListener('click', () => { aboutOverlay.classList.remove('hidden'); trapFocus(aboutOverlay); });
+  document.getElementById('about-close').addEventListener('click', () => aboutOverlay.classList.add('hidden'));
+  aboutOverlay.addEventListener('click', (e) => {
+    if (e.target === aboutOverlay) aboutOverlay.classList.add('hidden');
+  });
+
+  // ── Menu bar: File ▸ Load model / Recent ──
+  initMenuBar(document.querySelector('.menubar'), {
+    onOpen: (id) => { if (id === 'menu-file') _renderRecentMenu(); },
+  });
+  document.getElementById('menu-load-model').addEventListener('click', () => stlFileInput.click());
+  const _isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  for (const k of document.querySelectorAll('.menu-kbd[data-kbd]')) {
+    k.textContent = _isMac ? `⌘${k.dataset.kbd}` : `Ctrl+${k.dataset.kbd}`;
+  }
+  document.getElementById('menu-recent-clear').addEventListener('click', async () => {
+    await clearRecent();
+    _renderRecentMenu();
   });
 
   // ── Export ──
@@ -7458,9 +7485,69 @@ importProjectInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   importProjectInput.value = ''; // reset so the same file can be re-imported
-  try { await importProject(file); }
-  catch (err) { alert(t('alerts.importFailed', { msg: err.message })); }
+  openUserFile(file);
 });
+
+/**
+ * Open a file the user picked, dropped or chose from File ▸ Recent: a
+ * .bumpmesh project goes to importProject, a model to handleModelFile (macOS
+ * pickers ignore the accept filter, so the type is checked here, #124). Files
+ * that open are remembered for File ▸ Recent.
+ */
+async function openUserFile(file) {
+  const isProject = /\.bumpmesh$/i.test(file.name);
+  if (!isProject && !MODEL_FILE_RE.test(file.name)) {
+    alert(t('alerts.unsupportedModelType', { name: file.name }));
+    return;
+  }
+  addRecent(file, isProject ? 'project' : 'model');
+  if (isProject) {
+    try { await importProject(file); }
+    catch (err) { alert(t('alerts.importFailed', { msg: err.message })); }
+  } else {
+    await handleModelFile(file);
+  }
+}
+
+function _fmtSize(bytes) {
+  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+/** Fill File ▸ Recently used from IndexedDB (called each time the File menu opens). */
+async function _renderRecentMenu() {
+  const list = document.getElementById('menu-recent-list');
+  const clearBtn = document.getElementById('menu-recent-clear');
+  const entries = await listRecent();
+  list.replaceChildren();
+  clearBtn.hidden = entries.length === 0;
+  if (!entries.length) {
+    const empty = document.createElement('div');
+    empty.className = 'menu-empty';
+    empty.textContent = t('menu.noRecent');
+    list.appendChild(empty);
+    return;
+  }
+  for (const r of entries) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'menu-item menu-recent-item';
+    b.setAttribute('role', 'menuitem');
+    b.title = `${r.name} — ${_fmtSize(r.size)}, ${new Date(r.time).toLocaleString(getLang())}`;
+    const kind = document.createElement('span');
+    kind.className = 'menu-recent-kind';
+    kind.textContent = r.kind === 'project' ? t('menu.kindProject') : r.name.split('.').pop().toUpperCase();
+    const name = document.createElement('span');
+    name.className = 'menu-recent-name';
+    name.textContent = r.name;
+    b.append(kind, name);
+    b.addEventListener('click', async () => {
+      const file = await getRecent(r.name);
+      if (file) openUserFile(file);
+      else { alert(t('menu.recentMissing', { name: r.name })); _renderRecentMenu(); }
+    });
+    list.appendChild(b);
+  }
+}
 
 async function importProject(file) {
   if (file.size > PROJECT_MAX_IMPORT) {
@@ -7856,6 +7943,17 @@ window.addEventListener('pointerup', _scheduleUndoCapture);
 // Buttons
 if (undoBtn) undoBtn.addEventListener('click', _undo);
 if (redoBtn) redoBtn.addEventListener('click', _redo);
+
+// Keyboard: Ctrl/Cmd+O = File ▸ Load model, Ctrl/Cmd+S = File ▸ Save project.
+window.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+  const k = (e.key || '').toLowerCase();
+  if (k === 'o') { e.preventDefault(); stlFileInput.click(); }
+  else if (k === 's') {
+    e.preventDefault();
+    if (exportDialog.classList.contains('hidden')) exportProjectBtn.click();
+  }
+});
 
 // Keyboard: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z (or Ctrl/Cmd+Y) = redo.
 // Skip when focus is in a text-entry control so the browser's native field

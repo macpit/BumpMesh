@@ -55,28 +55,23 @@
   <header>
     <div class="logo">
       <img src="logo.png" alt="BumpMesh" width="24" height="24" />
-      <span>BumpMesh <span id="app-version" class="app-version"></span> <small style="opacity:.6;font-weight:400">by <a href="https://www.youtube.com/@CNCKitchen" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">CNC Kitchen</a></small></span>
+      <span>BumpMesh</span>
     </div>
-    <div class="header-actions">
-      <div class="project-io">
-        <button id="undo-btn" class="icon-btn" data-i18n-title="header.undo" title="Undo (Ctrl+Z)" disabled>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
-        </button>
-        <button id="redo-btn" class="icon-btn" data-i18n-title="header.redo" title="Redo (Ctrl+Shift+Z)" disabled>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg>
-        </button>
-        <span class="project-io-gap" aria-hidden="true"></span>
-        <button id="reset-settings-btn" class="icon-btn" data-i18n-title="header.resetSettings" title="Reset settings to defaults">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 9 9 9"/></svg>
-        </button>
-        <span class="project-io-gap" aria-hidden="true"></span>
-        <button id="export-project-btn" class="icon-btn text-btn" data-i18n-title="header.exportProject" title="Save project (.bumpmesh)">
-          <span data-i18n="header.save">Save</span>
-        </button>
-        <input type="file" id="import-project-input" accept=".bumpmesh" hidden />
-        <label for="import-project-input" class="icon-btn text-btn" data-i18n-title="header.importProject" title="Load project (.bumpmesh)" role="button" tabindex="0">
-          <span data-i18n="header.load">Load</span>
-        </label>
+    <!-- Menu bar (js/menuBar.js): File = models, projects, recent files; Info = about, legal, support, settings -->
+    <nav class="menubar" aria-label="Menu">
+      <div class="menu" id="menu-file">
+        <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false" data-i18n="menu.file">File</button>
+        <div class="menu-pop" role="menu">
+          <button id="menu-load-model" class="menu-item" type="button" role="menuitem"><span data-i18n="menu.loadModel">Load model…</span><kbd class="menu-kbd" data-kbd="O"></kbd></button>
+          <div class="menu-sep" role="separator"></div>
+          <input type="file" id="import-project-input" accept=".bumpmesh" hidden />
+          <label for="import-project-input" id="menu-load-project" class="menu-item" role="menuitem" tabindex="0" data-i18n-title="header.importProject" title="Load project (.bumpmesh)"><span data-i18n="menu.loadProject">Open project…</span></label>
+          <button id="export-project-btn" class="menu-item" type="button" role="menuitem" data-i18n-title="header.exportProject" title="Save project (.bumpmesh)"><span data-i18n="menu.saveProject">Save project…</span><kbd class="menu-kbd" data-kbd="S"></kbd></button>
+          <div class="menu-sep" role="separator"></div>
+          <div class="menu-label" data-i18n="menu.recent">Recently used</div>
+          <div id="menu-recent-list" class="menu-recent-list"></div>
+          <button id="menu-recent-clear" class="menu-item menu-item--muted" type="button" role="menuitem" data-i18n="menu.clearRecent">Clear list</button>
+        </div>
         <div id="load-dialog" class="export-dialog hidden">
           <p class="export-dialog-title" data-i18n="header.loadDialogTitle">This project includes a model. Load:</p>
           <label><input type="radio" name="load-mode" id="load-mode-all" value="all" /> <span data-i18n="header.loadModelLabel">Model + settings</span></label>
@@ -90,18 +85,51 @@
           <button id="export-go-btn" class="export-go-btn" data-i18n="header.exportGo">Save</button>
         </div>
       </div>
-      <div class="lang-seg">
+      <div class="menu" id="menu-info">
+        <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false" data-i18n="menu.info">Info</button>
+        <div class="menu-pop" role="menu">
+          <button id="about-link" class="menu-item" type="button" role="menuitem" data-i18n="menu.about">About BumpMesh</button>
+          <button id="welcome-link" class="menu-item" type="button" role="menuitem" data-i18n="menu.whatsNew">What’s New</button>
+          <button id="license-link" class="menu-item" type="button" role="menuitem" data-i18n="license.btn">License &amp; Terms</button>
+          <button id="imprint-link" class="menu-item" type="button" role="menuitem" data-i18n="imprint.btn">Imprint &amp; Privacy</button>
+          <div class="menu-sep" role="separator"></div>
+          <div class="menu-label" data-i18n="menu.support">Support the original author</div>
+          <a class="menu-item" role="menuitem" href="https://geni.us/CNCStoreTexture" target="_blank" rel="noopener noreferrer">CNCKitchen.STORE</a>
+          <a class="menu-item" role="menuitem" href="https://www.paypal.me/CNCKitchen" target="_blank" rel="noopener noreferrer">PayPal</a>
+          <a class="menu-item" role="menuitem" href="https://ko-fi.com/cnckitchen" target="_blank" rel="noopener noreferrer">Ko-fi</a>
+          <div class="menu-sep" role="separator"></div>
+          <div class="menu-label" data-i18n="menu.source">Source code</div>
+          <a class="menu-item" role="menuitem" href="https://github.com/macpit/stlTexturizer" target="_blank" rel="noopener noreferrer"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg><span data-i18n="menu.sourceFork">This fork (macpit)</span></a>
+          <a class="menu-item" role="menuitem" href="https://github.com/CNCKitchen/stlTexturizer" target="_blank" rel="noopener noreferrer"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg><span data-i18n="menu.sourceUpstream">Original (CNC Kitchen)</span></a>
+          <div class="menu-sep" role="separator"></div>
+          <div class="menu-label" data-i18n="menu.settings">Settings</div>
+          <div class="menu-setting">
+            <span data-i18n="menu.language">Language</span>
+            <div class="lang-seg"></div>
+          </div>
+          <div class="menu-setting">
+            <span data-i18n="menu.theme">Theme</span>
+            <div class="theme-seg" role="radiogroup" data-i18n-aria-label="theme.toggleAriaLabel" aria-label="Toggle light/dark mode">
+              <button type="button" class="theme-opt" data-theme-set="dark" role="radio" data-i18n="menu.themeDark">Dark</button>
+              <button type="button" class="theme-opt" data-theme-set="light" role="radio" data-i18n="menu.themeLight">Light</button>
+            </div>
+          </div>
+        </div>
       </div>
-      <button id="theme-toggle" class="theme-toggle"
-        data-i18n-title="theme.toggleTitle"
-        data-i18n-aria-label="theme.toggleAriaLabel"
-        title="Toggle light / dark mode" aria-label="Toggle light/dark mode">
-        <span class="icon-moon" data-i18n="theme.dark">Dark Theme</span>
-        <span class="icon-sun" data-i18n="theme.light">Light Theme</span>
-      </button>
-      <a href="https://github.com/CNCKitchen/stlTexturizer" target="_blank" rel="noopener noreferrer" class="github-link" title="GitHub Repository" aria-label="GitHub Repository">
-        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
-      </a>
+    </nav>
+    <div class="header-actions">
+      <div class="project-io">
+        <button id="undo-btn" class="icon-btn" data-i18n-title="header.undo" title="Undo (Ctrl+Z)" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
+        </button>
+        <button id="redo-btn" class="icon-btn" data-i18n-title="header.redo" title="Redo (Ctrl+Shift+Z)" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg>
+        </button>
+        <span class="project-io-gap" aria-hidden="true"></span>
+        <button id="reset-settings-btn" class="icon-btn" data-i18n-title="header.resetSettings" title="Reset settings to defaults">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 9 9 9"/></svg>
+        </button>
+      </div>
     </div>
   </header>
 
@@ -150,11 +178,6 @@
         <div id="gpu-warning" class="gpu-warning hidden" role="alert">
           <span data-i18n="warnings.softwareRendering">⚠ 3D is being rendered on the CPU — hardware acceleration is off or unavailable in this browser, so the viewer will be slow. Turn on “Use graphics acceleration when available” in the browser settings and restart it; chrome://gpu should then list WebGL as “Hardware accelerated”. On laptops with several GPUs, set the browser to “High performance” in the OS graphics settings.</span>
           <button id="gpu-warning-dismiss" class="gpu-warning-dismiss" aria-label="Dismiss">&times;</button>
-        </div>
-        <div id="store-cta-wrapper">
-          <span id="store-cta">
-            <span data-i18n-html="cta.store">Support this tool? Shop at <a href="https://geni.us/CNCStoreTexture" target="_blank" rel="noopener noreferrer">CNCKitchen.STORE</a> or send a tip via <a href="https://www.paypal.me/CNCKitchen" target="_blank" rel="noopener noreferrer">PayPal</a> / <a href="https://ko-fi.com/cnckitchen" target="_blank" rel="noopener noreferrer">Ko-fi</a></span><button id="store-cta-dismiss" aria-label="Dismiss">&times;</button>
-          </span>
         </div>
       </div>
       <div id="viewport-footer">
@@ -219,10 +242,6 @@
       <!-- Load STL -->
       <section class="panel-section">
         <div class="load-stl-row">
-          <label class="upload-btn" for="stl-file-input" style="flex:1;justify-content:center;">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
-            <span data-i18n="ui.loadStl">Load Model…</span>
-          </label>
           <button id="place-on-face-btn" class="place-on-face-btn" data-i18n-title="ui.placeOnFaceTitle" title="Click a face to orient it downward onto the print bed">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 3v14m0 0l-5-5m5 5l5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 21h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
             <span data-i18n="ui.placeOnFace">Place on Face</span>
@@ -746,9 +765,6 @@
         </div>
       </section>
 
-      <button id="welcome-link" class="license-link">What&rsquo;s New</button>
-      <button id="license-link" class="license-link" data-i18n="license.btn">License &amp; Terms</button>
-      <button id="imprint-link" class="license-link" data-i18n="imprint.btn">Imprint &amp; Privacy</button>
 
     </aside>
 
@@ -828,6 +844,30 @@
         <li data-i18n-html="license.item3">Support this tool? Shop at <a href="https://geni.us/CNCStoreTexture" target="_blank" rel="noopener">CNCKitchen.STORE</a> or send a tip via <a href="https://www.paypal.me/CNCKitchen" target="_blank" rel="noopener">PayPal</a> / <a href="https://ko-fi.com/cnckitchen" target="_blank" rel="noopener">Ko-fi</a>.</li>
         <li data-i18n-html="license.item8">Source code available on <a href="https://github.com/CNCKitchen/stlTexturizer" target="_blank" rel="noopener">GitHub</a>.</li>
       </ul>
+    </div>
+  </div>
+
+  <!-- About popup (Info ▸ About BumpMesh) -->
+  <div id="about-overlay" class="license-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="about-title">
+    <div class="license-modal about-modal">
+      <button id="about-close" class="license-close-btn" aria-label="Close">&#215;</button>
+      <div class="about-head">
+        <img src="logo.png" alt="" width="40" height="40" />
+        <div>
+          <h2 id="about-title">BumpMesh <span id="app-version" class="app-version"></span></h2>
+          <p class="about-tagline" data-i18n="about.tagline">Surface textures for 3D prints, right in the browser.</p>
+        </div>
+      </div>
+      <h3 class="imprint-section-heading" data-i18n="about.authorHeading">Original author</h3>
+      <p class="imprint-text" data-i18n-html="about.author">BumpMesh was created by <strong>Stefan Hermann</strong> &mdash; <a href="https://www.youtube.com/@CNCKitchen" target="_blank" rel="noopener noreferrer">CNC Kitchen</a>. Copyright &copy; 2026 CNCKitchen (Stefan Hermann) and contributors.</p>
+      <h3 class="imprint-section-heading" data-i18n="about.forkHeading">This version</h3>
+      <p class="imprint-text" data-i18n-html="about.fork">A fork by <a href="https://github.com/macpit/stlTexturizer" target="_blank" rel="noopener noreferrer">macpit</a> that adds multi-filament color painting in the 3MF export (textured faces, color by height) and the Unfold projection.</p>
+      <h3 class="imprint-section-heading" data-i18n="about.licenseHeading">License</h3>
+      <p class="imprint-text" data-i18n-html="about.license">Free software under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU Affero General Public License v3.0</a> (AGPL-3.0-only). You may use, change and share it; changed versions you offer to others, including over a network, must make their source code available under the same license. It comes with <strong>no warranty</strong>.</p>
+      <p class="imprint-text about-links">
+        <a href="https://github.com/macpit/stlTexturizer" target="_blank" rel="noopener noreferrer" data-i18n="menu.sourceFork">This fork (macpit)</a> &middot;
+        <a href="https://github.com/CNCKitchen/stlTexturizer" target="_blank" rel="noopener noreferrer" data-i18n="menu.sourceUpstream">Original (CNC Kitchen)</a>
+      </p>
     </div>
   </div>
 
