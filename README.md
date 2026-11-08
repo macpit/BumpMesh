@@ -1,4 +1,48 @@
-# BumpMesh by CNC Kitchen
+# BumpMesh – Color & GUI fork
+
+> **This is a fork of [BumpMesh by CNC Kitchen](https://github.com/CNCKitchen/stlTexturizer)** (original author: Stefan Hermann, live at [bumpmesh.com](https://bumpmesh.com)).
+>
+> **Try this fork:** **https://macpit.github.io/stlTexturizer/** (updated automatically on every push)
+
+## Why a fork?
+
+This fork adds multi-filament color painting to the 3MF export, new projection options and a reworked user interface. That is a lot of changes at once, close to a complete rework of the GUI, so it lives in its own repository where it can be tried as a whole.
+
+Nothing here is meant to compete with the original. **If wanted, I am happy to open pull requests to [CNCKitchen/stlTexturizer](https://github.com/CNCKitchen/stlTexturizer)**, split into small, reviewable pieces (for example the 3MF color export for issue #64 on its own).
+
+## What's different in this fork
+
+The list grows with every change; newest first within each group.
+
+### Filament colors (3MF)
+- **Textured faces as their own filament** ([upstream #64](https://github.com/CNCKitchen/stlTexturizer/issues/64)) — the 3MF export paints textured faces as filament 2 and untextured faces as filament 1. Bambu Studio, OrcaSlicer and PrusaSlicer load it as multi-material painting.
+- **Color by height** — up to 4 filaments split along the texture's height contours (for example green valleys, yellow ridges). Triangles are cut exactly along the contour lines, so the color borders follow the relief instead of jumping from triangle to triangle; the cut mesh stays watertight.
+- **Decimation keeps the color borders** — vertices on a border between two filaments stay where they are, so the triangle count still reaches the target without the colors bleeding.
+- **Thresholds and colors per band** — sliders for where each filament starts, swatches to match your actual filaments.
+- **Surface shares and height histogram** — how much of the surface each filament gets, estimated from the texture before exporting.
+- **Realistic preview** — the 3D preview colors the model by height the way the slicer will; "Show result" displays the exported, colored mesh itself.
+
+### Projection
+- **Unfold (flat faces)** — lays the texture over flat-faced parts like a box net, so the pattern runs continuously over folded edges instead of restarting on every face. Seams go where they are least visible (preferably bottom and side edges).
+- **Fit seams** — adjusts tile size and offset so the pattern meets itself at the remaining seams, measured with the actual texture.
+
+### User interface
+- **Menu bar** — the BumpMesh logo opens *Info* (about, what's new, license, imprint, support links for the original author, source code, language and theme); *File* has load model (⌘/Ctrl+O), open/save project (⌘/Ctrl+S), reset to defaults and **recently used** files (kept in the browser, no upload).
+- **Tool rail** on the left: Model, Texture, Mapping, Height, Mask, Colors, Undo/Redo, Export. The settings panel shows only the chosen step instead of one long list.
+- **Advanced / Beta dissolved** — every option moved to the step where it acts; long explanations moved into ⓘ tooltips.
+- **Export 3MF first** — 3MF is the main export button (it carries the colors), STL stays available next to it; both are always visible at the bottom of the panel.
+- **Scale** in the Model step, like the slicers: percent or size in mm per axis, uniform toggle, reset, and **drag handles in the 3D view** (corners scale uniformly, X/Y/Z handles per axis).
+- **Undo/redo for model edits** — scale, rotate and place on face can be undone like any setting.
+- **Cleaner screen** — no support banner or footer links in the sidebar, no welcome popup on start (still under Info ▸ What's New), 3D Preview moved to the viewport footer, larger footer text.
+
+### Hosting
+- **GitHub Pages** — every push publishes the app to https://macpit.github.io/stlTexturizer/. The imprint names this fork's operator, not CNC Kitchen.
+
+---
+
+*The original README follows.*
+
+# BumpMesh by CNC Kitchen (original README)
 
 **Live:** https://bumpmesh.com  
 **GitHub:** https://github.com/CNCKitchen/stlTexturizer
