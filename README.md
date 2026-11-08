@@ -40,6 +40,7 @@ The list grows with every change; newest first within each group.
 - **Export 3MF first** — 3MF is the main export button (it carries the colors), STL stays available next to it; both sit at the bottom of the Export step.
 - **Scale** in the Model step, like the slicers: percent or size in mm per axis, uniform toggle, reset, and **drag handles in the 3D view** (corners scale uniformly, X/Y/Z handles per axis). The export resolution, the 3D preview and the dimensions follow the new size.
 - **View gizmo** in the top right of the 3D view: click X, Y or Z to look along that axis (the faint ends show the opposite side), click the centre to return to the 3D view. Replaces the axes on the ground.
+- **In-app dialogs** — "Reset to defaults" and deleting your own textures ask in a dialog inside the app instead of a browser pop-up, so they also work in embedded browsers that drop those pop-ups.
 - **Undo/redo for model edits** — scale, rotate and place on face can be undone like any setting.
 - **Start model** — a 120 mm bowl (models/bowl.obj) instead of the 50 mm cube: curved walls, an inside and a flat bottom show more of what textures, masks and colors do.
 - **Cleaner screen** — no popup on export, no support banner or footer links in the sidebar, no welcome popup on start (still under Info ▸ What's New), 3D Preview moved to the viewport footer, larger footer text.
