@@ -6,6 +6,7 @@
 import { strToU8 } from 'fflate';
 import { QuantizedPointMap } from './meshIndex.js';
 import { zipChunks } from './zipStream.js';
+import { paintStateCode, MAX_FILAMENTS } from './colorBands.js';
 
 /**
  * Trigger a browser download for a binary buffer.
@@ -96,15 +97,15 @@ export function exportSTL(geometry, filename = 'textured.stl') {
  * tolerance) so the output is both smaller than binary STL and round-trippable
  * by this project's own 3MF loader.
  *
- * With `faceLabels` (#64) the textured faces get their own filament: every
- * face labelled 1 is painted for extruder 2, the rest stay on the object's
- * default extruder 1. See paintedPackage() for the package layout.
+ * With `faceLabels` each face is painted for filament label + 1 (textured
+ * faces #64, or height bands from colorBands.js); label 0 stays on the
+ * object's default extruder 1. See paintedPackage() for the package layout.
  *
  * @param {THREE.BufferGeometry} geometry  – non-indexed with position attribute
  * @param {string} [filename]
  * @param {() => boolean} [shouldAbort]
  * @param {object} [opts]
- * @param {Uint8Array|null} [opts.faceLabels]  per-face label, 1 = textured
+ * @param {Uint8Array|null} [opts.faceLabels]  per-face filament - 1
  * @returns {Promise<void>}
  */
 export async function export3MF(geometry, filename = 'textured.3mf', shouldAbort = () => false, opts = {}) {
@@ -140,7 +141,7 @@ export async function export3MF(geometry, filename = 'textured.3mf', shouldAbort
   if (faceLabels && faceLabels.length !== triCount) {
     throw new Error('3MF export: face labels do not match the triangle count');
   }
-  if (faceLabels && faceLabels.includes(1)) {
+  if (faceLabels && faceLabels.some(l => l > 0)) {
     const blob = await zipChunks(paintedPackage(uniqueXYZ, triIdx, faceLabels), shouldAbort);
     if (shouldAbort()) throw new Error('Aborted');
     triggerDownload(blob, filename);
@@ -214,13 +215,12 @@ function* modelChunks(vertices, indices, layout = PLAIN_LAYOUT) {
   yield enc.encode(pending);
 }
 
-// ── Painted 3MF (#64: textured faces on their own filament) ────────────────
+// ── Painted 3MF (per-face filaments: #64 and color by height) ──────────────
 //
 // Slicers store per-face filament assignments as a TriangleSelector state
 // string per triangle: `paint_color` (Bambu Studio, OrcaSlicer) and
-// `slic3rpe:mmu_segmentation` (PrusaSlicer), same encoding. A whole,
-// unsplit face in state 2 (extruder 2) serialises as the single nibble
-// (2 << 2) = "8"; faces without the attribute keep the object's extruder 1.
+// `slic3rpe:mmu_segmentation` (PrusaSlicer), same encoding (paintStateCode
+// in colorBands.js). Faces without the attribute keep the object's extruder 1.
 //
 // Package layout taken from PR #121 (birnam), which tested it against Bambu
 // Studio, OrcaSlicer, Snapmaker Orca and PrusaSlicer: a single-file 3MF with
@@ -236,7 +236,12 @@ const NS_CORE  = 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02';
 const NS_BAMBU = 'http://schemas.bambulab.com/package/2021';
 const NS_PROD  = 'http://schemas.microsoft.com/3dmanufacturing/production/2015/06';
 const NS_SLIC3R = 'http://schemas.slic3r.org/3mf/2017/06';
-const PAINT_TEXTURED = ' paint_color="8" slic3rpe:mmu_segmentation="8"';
+// Label L paints filament L + 1; label 0 keeps the object's extruder 1.
+const PAINT_ATTR = Array.from({ length: MAX_FILAMENTS }, (_, l) => {
+  if (l === 0) return '';
+  const code = paintStateCode(l + 1);
+  return ` paint_color="${code}" slic3rpe:mmu_segmentation="${code}"`;
+});
 
 function uuid() {
   return (typeof crypto !== 'undefined' && crypto.randomUUID)
@@ -255,7 +260,11 @@ function paintedPackage(vertices, indices, faceLabels) {
       `xmlns:p="${NS_PROD}" requiredextensions="p">\n` +
       `<resources>\n<object id="${MESH_ID}" p:UUID="${uuid()}" type="model">\n`,
     tail: '</object>\n</resources>\n<build/>\n</model>\n',
-    triAttr: (t) => (faceLabels[t] ? PAINT_TEXTURED : ''),
+    triAttr: (t) => {
+      const attr = PAINT_ATTR[faceLabels[t]];
+      if (attr === undefined) throw new Error(`3MF export: filament ${faceLabels[t] + 1} exceeds ${MAX_FILAMENTS}`);
+      return attr;
+    },
   };
 
   const rootModelXml =

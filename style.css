@@ -2722,3 +2722,31 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
   border-color: var(--accent);
   color: var(--text);
 }
+/* ── Filament colors (3MF) ───────────────────────────────────────────── */
+.filament-row { flex-wrap: nowrap; }
+.filament-swatch {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: none;
+  cursor: pointer;
+}
+.filament-swatch::-webkit-color-swatch-wrapper { padding: 2px; }
+.filament-swatch::-webkit-color-swatch { border: none; border-radius: 2px; }
+.filament-swatch::-moz-color-swatch { border: none; border-radius: 2px; }
+.filament-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.filament-from {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}

@@ -27,6 +27,10 @@ import { subdivide }          from './subdivision.js';
 import { runExportPipeline }  from './exportPipeline.js';
 import { runPreviewPipeline, computeFaceNormals } from './previewPipeline.js';
 import { exportSTL, export3MF } from './exporter.js';
+import { bandThresholds, heightRangeMm } from './colorBands.js';
+
+// Default contour heights (% of the texture height) for 2, 3 and 4 filament colors.
+const DEFAULT_COLOR_THRESHOLDS = Object.freeze({ 2: [50], 3: [40, 70], 4: [30, 55, 80] });
 import { buildAdjacency, bucketFill,
          buildExclusionOverlayGeo, buildFaceWeights } from './exclusion.js';
 import { buildSoftExclusion, softPaintedFaces } from './softMask.js';
@@ -161,9 +165,15 @@ const settings = {
   // masks) completely untouched, so original fillets and fine CAD detail
   // survive. Subdivision already skips their interior edges regardless.
   preserveUntextured: true,
-  // 3MF export (#64): put textured faces on their own filament (extruder 2)
-  // via slicer paint data; untextured faces stay on extruder 1.
-  colorTexturedFaces: false,
+  // 3MF filament colors (colorBands.js): 'off', 'textured' (#64: textured
+  // faces on filament 2) or 'height' (colorBands bands split at
+  // colorThresholds, % of the texture height). filamentColors only tint the
+  // preview; the 3MF carries filament numbers. Arrays are replaced, never
+  // mutated, so settings snapshots stay independent.
+  colorMode: 'off',
+  colorBands: 2,
+  colorThresholds: [50],
+  filamentColors: ['#3f8f5a', '#f2c200', '#d9532b', '#2f6fd6'],
   useDisplacement: false,
   // Cylindrical-mode controls.
   // null/undefined → derive from bounds (preserves legacy / non-cylindrical behavior).
@@ -460,7 +470,10 @@ const harvestFlatChk         = document.getElementById('harvest-flat-chk');
 const harvestTolInput        = document.getElementById('harvest-tol');
 const harvestTolRow          = document.getElementById('harvest-tol-row');
 const preserveUntexturedChk  = document.getElementById('preserve-untextured-chk');
-const colorTexturedChk       = document.getElementById('color-textured-chk');
+const colorModeSel           = document.getElementById('color-mode');
+const colorBandsSel          = document.getElementById('color-bands');
+const colorBandsRow          = document.getElementById('color-bands-row');
+const colorFilamentsBox      = document.getElementById('color-filaments');
 
 // ── Exclusion panel DOM refs ──────────────────────────────────────────────────
 const exclBrushBtn        = document.getElementById('excl-brush-btn');
@@ -1143,6 +1156,7 @@ function populateLanguageSelector() {
     _scheduleCylinderPanelRedraw();
     gallery.refreshText();
     _renderLayerStrip();
+    _renderFilamentColors();
   });
 
   languageSelector.appendChild(select);
@@ -1783,11 +1797,17 @@ function wireEvents() {
     settings.preserveUntextured = preserveUntexturedChk.checked;
     // Export/bake-time flag only — no preview rebuild needed.
   });
-  colorTexturedChk.checked = settings.colorTexturedFaces;
-  colorTexturedChk.addEventListener('change', () => {
-    settings.colorTexturedFaces = colorTexturedChk.checked;
-    // 3MF export-time flag only — no preview rebuild needed.
+  colorModeSel.addEventListener('change', () => {
+    settings.colorMode = colorModeSel.value;
+    _renderFilamentColors();
   });
+  colorBandsSel.addEventListener('change', () => {
+    const n = +colorBandsSel.value;
+    settings.colorBands = n;
+    settings.colorThresholds = DEFAULT_COLOR_THRESHOLDS[n];
+    _renderFilamentColors();
+  });
+  _renderFilamentColors();
 
   dispPreviewToggle.addEventListener('change', () => {
     toggleDisplacementPreview(dispPreviewToggle.checked);
@@ -5279,7 +5299,76 @@ function _materialSettings(preview) {
     // Outline wrap: the shader maps it as cylindrical until the mesh on screen has its places.
     outlineWrapReady: _owReadyOn(_displayGeometry()),
     outlineWrapMean:  _owWrap ? _owWrap.meanLength : 1,
+    // Filament colors of the 3MF export, shown on the model.
+    filamentColors: settings.colorMode === 'off' ? null : {
+      mode: settings.colorMode,
+      bands: settings.colorBands,
+      thresholds: bandThresholds(settings.colorBands, settings.colorThresholds),
+      range: heightRangeMm(settings, preview.list.map(l => ({ settings: l }))),
+      swatches: settings.filamentColors,
+    },
   };
+}
+
+// ── Filament colors (3MF) ─────────────────────────────────────────────────────
+
+/**
+ * Rebuild the filament rows (color swatch + "from x %" slider per height
+ * band) for the current color mode and push the colors to the preview.
+ */
+function _renderFilamentColors() {
+  const mode = settings.colorMode;
+  colorModeSel.value = mode;
+  colorBandsSel.value = String(settings.colorBands);
+  colorBandsRow.classList.toggle('hidden', mode !== 'height');
+  colorFilamentsBox.classList.toggle('hidden', mode === 'off');
+  colorFilamentsBox.replaceChildren();
+  const n = mode === 'height' ? settings.colorBands : mode === 'textured' ? 2 : 0;
+  for (let i = 0; i < n; i++) {
+    const row = document.createElement('div');
+    row.className = 'form-row filament-row';
+    const swatch = document.createElement('input');
+    swatch.type = 'color';
+    swatch.className = 'filament-swatch';
+    swatch.value = settings.filamentColors[i];
+    swatch.title = t('tooltips.filamentSwatch');
+    swatch.addEventListener('input', () => {
+      settings.filamentColors = settings.filamentColors.map((c, k) => (k === i ? swatch.value : c));
+      _syncPreviewMaterial();
+    });
+    const label = document.createElement('span');
+    label.className = 'filament-label';
+    label.textContent = mode === 'textured'
+      ? t(i === 0 ? 'ui.filamentUntextured' : 'ui.filamentTextured', { n: i + 1 })
+      : t('ui.filamentN', { n: i + 1 });
+    row.append(swatch, label);
+    if (mode === 'height' && i > 0) {
+      // Filament i starts at threshold i-1; keep thresholds strictly ordered.
+      const lo = () => (i > 1 ? settings.colorThresholds[i - 2] + 1 : 1);
+      const hi = () => (i < n - 1 ? settings.colorThresholds[i] - 1 : 99);
+      const range = document.createElement('input');
+      range.type = 'range'; range.min = '1'; range.max = '99'; range.step = '1';
+      range.title = t('tooltips.colorFrom');
+      const num = document.createElement('input');
+      num.type = 'number'; num.className = 'val'; num.min = '1'; num.max = '99'; num.step = '1';
+      const set = (v) => {
+        v = Math.round(Math.min(hi(), Math.max(lo(), +v || 0)));
+        settings.colorThresholds = settings.colorThresholds.map((p, k) => (k === i - 1 ? v : p));
+        range.value = num.value = String(v);
+        _syncPreviewMaterial();
+      };
+      range.value = num.value = String(settings.colorThresholds[i - 1]);
+      range.addEventListener('input', () => set(range.value));
+      num.addEventListener('change', () => set(num.value));
+      const from = document.createElement('span');
+      from.className = 'filament-from';
+      from.textContent = t('ui.colorFrom');
+      row.classList.add('slider-row');
+      row.append(from, range, num);
+    }
+    colorFilamentsBox.append(row);
+  }
+  _syncPreviewMaterial();
 }
 
 /** Rebuild the preview material's per-layer uniforms and global settings. */
@@ -5619,7 +5708,7 @@ async function handleExport(format = 'stl') {
       imgHeight: inputs.imgHeight,
       layers: inputs.layers,
       // Face labels only matter for the 3MF writer; STL exports skip them.
-      settings: { ..._owSettings(settings), colorTexturedFaces: format === '3mf' && settings.colorTexturedFaces },
+      settings: { ..._owSettings(settings), colorMode: format === '3mf' ? settings.colorMode : 'off' },
       bounds: currentBounds,
       regularizeOpts: _regularizeOpts(),
       mode: 'export',
@@ -5729,6 +5818,9 @@ function _onExportPipelineEvent(stage, p, info) {
     case 'displace':
       if (p === 0) setProgress(0.38, t('progress.applyingDisplacement', { n: info.triCount.toLocaleString() }));
       else setProgress(0.38 + p * 0.32, t('progress.displacingVertices'));
+      break;
+    case 'colorBands':
+      setProgress(0.70, t('progress.colorBands'));
       break;
     case 'decimate':
       if (info.needsDecimation) {
@@ -6370,7 +6462,7 @@ const PERSISTED_KEYS = [
   'offsetU', 'offsetV', 'rotation', 'rotateAroundZ',
   'amplitude', 'textureHeight', 'invertDisplacement',
   'invertTexture',
-  'symmetricDisplacement', 'noDownwardZ', 'smoothBottom', 'harvestFlatFaces', 'harvestTol', 'preserveUntextured', 'colorTexturedFaces', 'textureSmoothing',
+  'symmetricDisplacement', 'noDownwardZ', 'smoothBottom', 'harvestFlatFaces', 'harvestTol', 'preserveUntextured', 'colorMode', 'colorBands', 'colorThresholds', 'filamentColors', 'textureSmoothing',
   'mappingBlend', 'seamBandWidth', 'capAngle', 'boundaryFalloff', 'boundaryFalloffCurve',
   'bottomAngleLimit', 'topAngleLimit',
   'refineLength', 'maxTriangles',
@@ -6656,10 +6748,17 @@ function applySettingsSnapshot(snap) {
     preserveUntexturedChk.checked = snap.preserveUntextured;
     preserveUntexturedChk.dispatchEvent(new Event('change', { bubbles: true }));
   }
-  if (snap.colorTexturedFaces != null) {
-    colorTexturedChk.checked = snap.colorTexturedFaces;
-    colorTexturedChk.dispatchEvent(new Event('change', { bubbles: true }));
+  // Filament colors. Snapshots from before color-by-height only carry the
+  // #64 flag colorTexturedFaces.
+  if (snap.colorMode != null || snap.colorTexturedFaces != null) {
+    settings.colorMode = ['off', 'textured', 'height'].includes(snap.colorMode)
+      ? snap.colorMode : (snap.colorTexturedFaces ? 'textured' : 'off');
   }
+  if (snap.colorBands != null) settings.colorBands = Math.min(4, Math.max(2, snap.colorBands | 0));
+  if (Array.isArray(snap.colorThresholds)) settings.colorThresholds = snap.colorThresholds.slice(0, settings.colorBands - 1);
+  if (settings.colorThresholds.length !== settings.colorBands - 1) settings.colorThresholds = DEFAULT_COLOR_THRESHOLDS[settings.colorBands];
+  if (Array.isArray(snap.filamentColors)) settings.filamentColors = snap.filamentColors.slice(0, 4);
+  _renderFilamentColors();
 
   // Cylindrical-mode state. cylinderCenterX/Y/radius pass through unchanged
   // (null is meaningful — falls back to AABB defaults during projection).
@@ -6766,7 +6865,9 @@ const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   offsetU: 0, offsetV: 0, rotation: 0, rotateAroundZ: false,
   amplitude: 0.5, textureHeight: 0.5, invertDisplacement: false,
   invertTexture: false,
-  symmetricDisplacement: false, noDownwardZ: false, smoothBottom: true, harvestFlatFaces: true, harvestTol: 0.005, preserveUntextured: true, colorTexturedFaces: false, textureSmoothing: 0,
+  symmetricDisplacement: false, noDownwardZ: false, smoothBottom: true, harvestFlatFaces: true, harvestTol: 0.005, preserveUntextured: true, textureSmoothing: 0,
+  colorMode: 'off', colorBands: 2, colorThresholds: [50],
+  filamentColors: ['#3f8f5a', '#f2c200', '#d9532b', '#2f6fd6'],
   mappingBlend: 1, seamBandWidth: 0.5, capAngle: 20, boundaryFalloff: 0,
   boundaryFalloffCurve: 'ease',
   bottomAngleLimit: 5, topAngleLimit: 0,

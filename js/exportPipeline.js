@@ -48,8 +48,8 @@
  *   lockedOverBudget: boolean,  // preserve-untextured beta: locked faces ≥ triangle target
  *   faceParentId: Int32Array|null,   // bake mode only
  *   repairStats: object|null,        // export mode, when repair ran
- *   faceLabels: Uint8Array|null,     // export mode with settings.colorTexturedFaces:
- *                                    // 1 = textured face, 0 = untextured, output face order
+ *   faceLabels: Uint8Array|null,     // export mode with settings.colorMode 'textured'
+ *                                    // or 'height': filament - 1 per face, output face order
  * }>}
  */
 
@@ -61,6 +61,7 @@ import { applyDisplacement, applyDisplacementLayers } from './displacement.js';
 import { decimate } from './decimation.js';
 import { resolveTJunctions, countEdgeDefects, countAreaSlivers } from './meshRepair.js';
 import { interpolateFromParents } from './softMask.js';
+import { cutHeightBands, bandThresholds, heightRangeMm } from './colorBands.js';
 
 const yieldFrame = () => new Promise(r => setTimeout(r, 0));
 
@@ -211,6 +212,24 @@ export function snapBottomToFlat(geometry, bottomZ, tol = 0.1) {
   return dirtyTris;
 }
 
+// Non-indexed geometry with per-face normals.
+function flatGeometry(positions) {
+  const nrm = new Float32Array(positions.length);
+  for (let i = 0; i < positions.length; i += 9) {
+    const ux = positions[i+3]-positions[i], uy = positions[i+4]-positions[i+1], uz = positions[i+5]-positions[i+2];
+    const vx = positions[i+6]-positions[i], vy = positions[i+7]-positions[i+1], vz = positions[i+8]-positions[i+2];
+    const nx = uy*vz-uz*vy, ny = uz*vx-ux*vz, nz = ux*vy-uy*vx;
+    const len = Math.sqrt(nx*nx+ny*ny+nz*nz) || 1;
+    nrm[i] = nrm[i+3] = nrm[i+6] = nx/len;
+    nrm[i+1] = nrm[i+4] = nrm[i+7] = ny/len;
+    nrm[i+2] = nrm[i+5] = nrm[i+8] = nz/len;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  return g;
+}
+
 export async function runExportPipeline(input, onEvent = () => {}, shouldAbort = () => false) {
   const { settings, regularizeOpts } = input;
   const mode = input.mode === 'bake' ? 'bake' : 'export';
@@ -280,6 +299,12 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
       ), 1));
     }
 
+    // Filament split for the 3MF writer: 'textured' (#64) or 'height' (color
+    // by height). Older snapshots only have the colorTexturedFaces flag.
+    const colorMode = mode !== 'export' ? 'off'
+      : settings.colorMode || (settings.colorTexturedFaces ? 'textured' : 'off');
+    const dispSettings = colorMode === 'height' ? { ...settings, wantHeights: true } : settings;
+
     const subTriCount = subdivided.attributes.position.count / 3;
     onEvent('displace', 0, { triCount: subTriCount });
     await yieldFrame();
@@ -301,7 +326,7 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
         };
       });
       displaced = applyDisplacementLayers(
-        subdivided, refined, settings, bounds,
+        subdivided, refined, dispSettings, bounds,
         (p) => onEvent('displace', p, { triCount: subTriCount })
       );
     } else {
@@ -310,7 +335,7 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
         input.imageData,
         input.imgWidth,
         input.imgHeight,
-        settings,
+        dispSettings,
         bounds,
         (p) => onEvent('displace', p, { triCount: subTriCount })
       );
@@ -337,13 +362,38 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
     subdivided.dispose();
     subdivided = null;
 
-    const dispTriCount = displaced.attributes.position.count / 3;
-    // Textured/untextured face labels for the 3MF filament split (#64). Every
+    // Face labels for the 3MF filament split: label = filament - 1. Every
     // later stage either keeps face order (bottom clamp/snap) or carries the
     // labels itself (decimate, resolveTJunctions).
-    let faceLabels = mode === 'export' && settings.colorTexturedFaces
-      ? displaced.userData.texturedFace || null
-      : null;
+    let faceLabels = null;
+    if (colorMode === 'textured') {
+      faceLabels = displaced.userData.texturedFace || null;
+    } else if (colorMode === 'height') {
+      onEvent('colorBands', 0);
+      await yieldFrame();
+      const T = bandThresholds(settings.colorBands ?? 2, settings.colorThresholds || [50]);
+      const range = heightRangeMm(settings, layers);
+      const span = range.max - range.min;
+      const hMm = displaced.userData.heightMm;
+      const h = new Float32Array(hMm.length);
+      for (let i = 0; i < h.length; i++) {
+        const v = (hMm[i] - range.min) / span;
+        h[i] = v < 0 ? 0 : v > 1 ? 1 : v;
+      }
+      const cut = cutHeightBands(displaced.attributes.position.array, h,
+        displaced.userData.texturedFace || null, T);
+      displaced.dispose();
+      displaced = flatGeometry(cut.positions);
+      faceLabels = cut.labels;
+      if (lockedFaces) {
+        const remapped = new Uint8Array(cut.parent.length);
+        for (let t = 0; t < remapped.length; t++) remapped[t] = lockedFaces[cut.parent[t]];
+        lockedFaces = remapped;
+      }
+      if (shouldAbort()) return null;
+    }
+
+    const dispTriCount = displaced.attributes.position.count / 3;
     const needsDecimation = dispTriCount > settings.maxTriangles;
     finalGeometry = displaced;
 

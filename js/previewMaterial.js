@@ -512,6 +512,20 @@ const fragmentShader = /* glsl */`
   uniform float     boundaryFalloffDist;
   uniform int       boundaryFalloffCurve; // 0 = linear, 1 = s-curve, 2 = ease-in
   uniform int       layeredTint;          // 1 = several layers: surfaces the active layer leaves alone are neutral grey
+  // Filament colors (3MF export preview): 0 = off, 1 = textured faces on
+  // filament 2, 2 = color by height (colorBands.js, hard steps like the export).
+  uniform int       colorMode;
+  uniform int       colorBandCount;
+  uniform vec3      colorThresholds;      // normalised 0..1, first colorBandCount-1 used
+  uniform vec2      colorHeightRange;     // mm range that maps to 0..1 (heightRangeMm)
+  uniform vec3      colorSwatch[4];       // filament 1..4
+
+  vec3 swatchColor(int i) {
+    if (i <= 0) return colorSwatch[0];
+    if (i == 1) return colorSwatch[1];
+    if (i == 2) return colorSwatch[2];
+    return colorSwatch[3];
+  }
 
   varying vec2  vOutlineWrap;
   varying vec3  vModelPos;
@@ -639,6 +653,19 @@ const fragmentShader = /* glsl */`
     // are perfectly consistent everywhere.  Mask tinting is applied AFTER
     // lighting as a colour blend so masked areas keep the same glossy look.
     vec3 tealBase      = vec3(0.22, 0.68, 0.68);
+    if (colorMode == 1) {
+      tealBase = swatchColor(coverSum > 0.5 ? 1 : 0);
+    } else if (colorMode == 2) {
+      int band = 0;
+      if (coverSum > 0.5) {
+        float H = compositeHeight(vModelPos, PN, vModelNormal, w);
+        float hn = (H - colorHeightRange.x) / max(colorHeightRange.y - colorHeightRange.x, 1e-6);
+        if (colorBandCount > 1 && hn >= colorThresholds.x) band = 1;
+        if (colorBandCount > 2 && hn >= colorThresholds.y) band = 2;
+        if (colorBandCount > 3 && hn >= colorThresholds.z) band = 3;
+      }
+      tealBase = swatchColor(band);
+    }
     // Single layer: the familiar orange (painted out) and dark grey (angle
     // mask). Several layers: everything the active layer does not cover is a
     // plain neutral grey, so "teal = active layer" reads at a glance and the
@@ -800,6 +827,20 @@ export function updateMaterial(material, layers, settings) {
   u.boundaryFalloffDist.value  = settings.boundaryFalloff ?? 0.0;
   u.boundaryFalloffCurve.value = FALLOFF_CURVE_INDEX[settings.boundaryFalloffCurve] ?? 0;
   u.layeredTint.value = settings.layeredTint ? 1 : 0;
+  const c = settings.filamentColors || null;
+  u.colorMode.value = c ? (c.mode === 'height' ? 2 : c.mode === 'textured' ? 1 : 0) : 0;
+  if (c && u.colorMode.value) {
+    u.colorBandCount.value = c.mode === 'height' ? c.bands : 2;
+    u.colorThresholds.value.set(c.thresholds[0] ?? 2, c.thresholds[1] ?? 2, c.thresholds[2] ?? 2);
+    u.colorHeightRange.value.set(c.range.min, c.range.max);
+    // Raw sRGB components: the shader writes colors as display values (like
+    // its teal base), so no THREE.Color linear conversion here.
+    for (let i = 0; i < 4; i++) {
+      const m = /^#?([0-9a-f]{6})$/i.exec(c.swatches[i] || '');
+      const n = m ? parseInt(m[1], 16) : 0x888888;
+      u.colorSwatch.value[i].set((n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255);
+    }
+  }
 }
 
 // ── Internal ──────────────────────────────────────────────────────────────────
@@ -853,6 +894,11 @@ function buildUniforms() {
     boundaryFalloffDist:  { value: 0.0 },
     boundaryFalloffCurve: { value: 0 },
     layeredTint:          { value: 0 },
+    colorMode:            { value: 0 },
+    colorBandCount:       { value: 2 },
+    colorThresholds:      { value: new THREE.Vector3(0.5, 2, 2) },
+    colorHeightRange:     { value: new THREE.Vector2(0, 1) },
+    colorSwatch:          { value: [0, 1, 2, 3].map(() => new THREE.Vector3(0.5, 0.5, 0.5)) },
   };
 }
 

@@ -700,6 +700,11 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
   // of the same position land at exactly the same 3-D point.
 
   const REPORT_EVERY = 5000;
+  // Color by height (colorBands.js): the composited displacement in mm per
+  // corner. Per position (acc[vid]), so every copy of a point carries the
+  // same height — the contour cut relies on that to stay watertight. Only
+  // allocated when asked for: 4 bytes per corner.
+  const heightMm = settings.wantHeights ? new Float32Array(count) : null;
   const moves = creases ? _creaseMoves(creases, groupAcc, smoothNrmX, smoothNrmY, smoothNrmZ) : null;
   if (moves) _guardReleasedFolds(creases, moves, posAttr, vertexId, acc, smoothNrmX, smoothNrmY, smoothNrmZ);
 
@@ -709,6 +714,7 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
 
     const vid  = vertexId[i];
     const disp = acc[vid];
+    if (heightMm) heightMm[i] = disp;
     const mfTotal = maskedFracTotal[vid];
     const maskedFrac = mfTotal > 0 ? maskedFracMasked[vid] / mfTotal : 0;
 
@@ -780,6 +786,7 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
   out.setAttribute('position', new THREE.BufferAttribute(newPos, 3));
   out.setAttribute('normal',   new THREE.BufferAttribute(newNrm, 3));
   out.userData.texturedFace = texturedFace;
+  if (heightMm) out.userData.heightMm = heightMm;
   return out;
 }
 

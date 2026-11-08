@@ -51,11 +51,12 @@
  *   geometry carries userData.lockedOverBudget = true.
  * @param {boolean}              [releaseInput]  drop the input's buffers once indexed
  * @param {Uint8Array|null}      [faceLabels]    per-face label in the input's face
- *   order (e.g. textured / untextured, #64). Vertices where faces of different
- *   labels meet are pinned like locked vertices, so the label boundary keeps
- *   its exact shape and no collapse drags one label's area across the other.
- *   The surviving faces' labels are returned as userData.faceLabels, in
- *   output face order.
+ *   order (filament split: textured faces #64, height bands). Vertices where
+ *   faces of different labels meet are anchors: they never move and are never
+ *   removed, so the label boundary keeps its exact shape. Unlike locked
+ *   vertices they may absorb a neighbour (half-edge collapse onto the anchor),
+ *   so the fine triangles along a boundary still decimate. The surviving
+ *   faces' labels are returned as userData.faceLabels, in output face order.
  * @returns {THREE.BufferGeometry}
  */
 
@@ -102,6 +103,12 @@ const CREASE_WEIGHT = 1e4;  // quadric penalty weight for crease edges
 // real deviation is smaller, since the cost sums squared distances over all
 // incident faces. 0.005 mm ≈ a few microns — far below FDM resolution.
 const DEFAULT_HARVEST_TOL = 0.005;  // mm; harvestCeil = tol²
+// Label boundaries (color edges) may be simplified by removing a boundary
+// vertex when the boundary line moves by at most this much (mm). 0.02 mm is
+// a twentieth of a typical nozzle — invisible in a print — and without it a
+// fine texture's dense height contours would hold the mesh far above the
+// triangle target.
+const LABEL_EDGE_TOL = 0.02;
 
 // Time-based yield: only yield every ~100ms of wall time instead of every N iterations.
 // In foreground tabs setTimeout(0) costs ~4ms; in background tabs it's throttled to ~1s.
@@ -156,10 +163,16 @@ export async function decimate(geometry, targetTriangles, onProgress, harvestFla
       lockedVert[faces[f * 3 + 2]] = 1;
     }
   }
-  // Label boundary (#64): pin every vertex shared by faces of different labels.
-  // Only the pinning is shared with lockedVert — lockedFaceCount (and with it
-  // lockedOverBudget) still counts the preserve-untextured faces alone.
+  // Label boundary anchors: every vertex shared by faces of different labels.
+  // A non-anchor vertex touches faces of one label only, and collapsing it
+  // onto a neighbour (anchor or not) never gives any vertex a face of a new
+  // label — so the invariant holds for the whole run and labels simply ride
+  // along with the surviving face slots.
+  let anchorVert = null;
+  // Filled after the adjacency lists exist (see anchorPairCost below).
+  let anchorPairCost = null;
   if (faceLabels) {
+    anchorVert = new Uint8Array(vertCount);
     const firstLabel = new Int16Array(vertCount).fill(-1);
     for (let f = 0; f < faceCount; f++) {
       if (faces[f * 3] < 0) continue;
@@ -167,10 +180,7 @@ export async function decimate(geometry, targetTriangles, onProgress, harvestFla
       for (let k = 0; k < 3; k++) {
         const v = faces[f * 3 + k];
         if (firstLabel[v] === -1) firstLabel[v] = L;
-        else if (firstLabel[v] !== L) {
-          if (!lockedVert) lockedVert = new Uint8Array(vertCount);
-          lockedVert[v] = 1;
-        }
+        else if (firstLabel[v] !== L) anchorVert[v] = 1;
       }
     }
   }
@@ -197,6 +207,58 @@ export async function decimate(geometry, targetTriangles, onProgress, harvestFla
   // Doubly-linked vertex-face incidence (typed arrays — faster than Set<number>)
   const { vfHead, slotVert, slotNext, slotPrev, slotLive } =
     buildLinkedAdj(faces, faceCount, vertCount);
+
+  // Boundary simplification: may anchor `removed` collapse onto anchor
+  // `survivor`? Only when `removed` lies on exactly one label boundary line
+  // (two labels around it, two boundary edges), `survivor` is one of its two
+  // boundary neighbours, and dropping it moves the line by ≤ LABEL_EDGE_TOL.
+  // Returns the collapse cost (QEM at the survivor + line deviation²) or -1.
+  if (anchorVert) {
+    const nbVert = [], nbLab = [], nbBoundary = [];
+    anchorPairCost = (survivor, removed) => {
+      nbVert.length = nbLab.length = nbBoundary.length = 0;
+      let labA = -1, labB = -1;
+      for (let sv = vfHead[removed]; sv >= 0; sv = slotNext[sv]) {
+        const f = (sv / 3) | 0;
+        if (faces[f * 3] < 0) continue;
+        const L = faceLabels[f];
+        if (labA === -1 || labA === L) labA = L;
+        else if (labB === -1 || labB === L) labB = L;
+        else return -1; // three labels meet here: a junction, keep it
+        for (let k = 0; k < 3; k++) {
+          const x = faces[f * 3 + k];
+          if (x === removed) continue;
+          const i = nbVert.indexOf(x);
+          if (i === -1) { nbVert.push(x); nbLab.push(L); nbBoundary.push(0); }
+          else if (nbLab[i] !== L) nbBoundary[i] = 1;
+        }
+      }
+      let w = -1, nB = 0, hasSurvivor = false;
+      for (let i = 0; i < nbVert.length; i++) {
+        if (!nbBoundary[i]) continue;
+        nB++;
+        if (nbVert[i] === survivor) hasSurvivor = true; else w = nbVert[i];
+      }
+      if (nB !== 2 || !hasSurvivor || w < 0) return -1;
+      // Distance of `removed` from the new boundary segment survivor–w.
+      const ax = positions[survivor*3], ay = positions[survivor*3+1], az = positions[survivor*3+2];
+      const ex = positions[w*3] - ax, ey = positions[w*3+1] - ay, ez = positions[w*3+2] - az;
+      const rx = positions[removed*3] - ax, ry = positions[removed*3+1] - ay, rz = positions[removed*3+2] - az;
+      const el2 = ex*ex + ey*ey + ez*ez;
+      let tt = el2 > 0 ? (rx*ex + ry*ey + rz*ez) / el2 : 0;
+      tt = tt < 0 ? 0 : tt > 1 ? 1 : tt;
+      const dx = rx - tt*ex, dy = ry - tt*ey, dz = rz - tt*ez;
+      const dev2 = dx*dx + dy*dy + dz*dz;
+      if (dev2 > LABEL_EDGE_TOL * LABEL_EDGE_TOL) return -1;
+      return evalQSum(quadrics, survivor, removed, ax, ay, az) + dev2;
+    };
+  }
+  const pushAnchorPair = (survivor, removed) => {
+    const cost = anchorPairCost(survivor, removed);
+    if (cost < 0) return;
+    heap.push(cost, survivor, removed, version[survivor], version[removed],
+      positions[survivor*3], positions[survivor*3+1], positions[survivor*3+2]);
+  };
 
   const active  = new Uint8Array(vertCount).fill(1);
   // Per-vertex version counter: incremented whenever a vertex's quadric or
@@ -238,7 +300,11 @@ export async function decimate(geometry, targetTriangles, onProgress, harvestFla
       if (lockedVert && (lockedVert[va] || lockedVert[vb])) continue;
       const lo = va < vb ? va : vb, hi = va < vb ? vb : va;
       seedSeen.getOrSet(lo, hi, 1);
-      if (seedSeen.inserted) pushEdge(heap, quadrics, positions, version, va, vb);
+      if (!seedSeen.inserted) continue;
+      if (anchorVert && anchorVert[va] && anchorVert[vb]) { pushAnchorPair(va, vb); pushAnchorPair(vb, va); }
+      else if (anchorVert && anchorVert[va]) pushAnchoredEdge(heap, quadrics, positions, version, va, vb);
+      else if (anchorVert && anchorVert[vb]) pushAnchoredEdge(heap, quadrics, positions, version, vb, va);
+      else pushEdge(heap, quadrics, positions, version, va, vb);
     }
   }
   // Seeding is the only consumer — drop the table before the collapse loop so
@@ -297,6 +363,9 @@ export async function decimate(geometry, targetTriangles, onProgress, harvestFla
     // 0 → stale entry, 1 → boundary edge (Guard 1), ≥2 → safe to continue
     const nsh = sharedFaceCount(faces, vfHead, slotNext, v1, v2);
     if (nsh < 2) continue;
+    // Boundary-line collapse: the neighbourhood may have changed since the
+    // push without bumping either version, so re-check it now.
+    if (anchorVert && anchorVert[v1] && anchorVert[v2] && anchorPairCost(v1, v2) < 0) continue;
 
     // ── Three safety guards ───────────────────────────────────────────────────
     lkEpoch += 2;  // +2 so ep and ep+1 never collide with the next call
@@ -349,7 +418,15 @@ export async function decimate(geometry, targetTriangles, onProgress, harvestFla
         if (nb !== v1 && nbStamp[nb] !== epoch) {
           nbStamp[nb] = epoch;
           // v1 is never locked (locked edges are never pushed), so only nb needs checking.
-          if (active[nb] && !(lockedVert && lockedVert[nb])) pushEdge(heap, quadrics, positions, version, v1, nb);
+          if (!active[nb] || (lockedVert && lockedVert[nb])) continue;
+          if (!anchorVert) { pushEdge(heap, quadrics, positions, version, v1, nb); continue; }
+          // An anchor only ever survives a collapse (it is always heap v1).
+          if (anchorVert[v1]) {
+            if (!anchorVert[nb]) pushAnchoredEdge(heap, quadrics, positions, version, v1, nb);
+            else { pushAnchorPair(v1, nb); pushAnchorPair(nb, v1); }
+          }
+          else if (anchorVert[nb]) pushAnchoredEdge(heap, quadrics, positions, version, nb, v1);
+          else pushEdge(heap, quadrics, positions, version, v1, nb);
         }
       }
     }
@@ -726,6 +803,16 @@ function pushEdge(heap, quadrics, positions, version, v1, v2) {
   const dz = positions[v2*3+2] - positions[v1*3+2];
   heap.push(cost + (dx*dx + dy*dy + dz*dz) * 1e-8,
             v1, v2, version[v1], version[v2], px, py, pz);
+}
+
+// Half-edge collapse of `other` onto `anchor`: the anchor keeps its position,
+// so the heap entry carries it as v1 (survivor) at its current coordinates.
+function pushAnchoredEdge(heap, quadrics, positions, version, anchor, other) {
+  const px = positions[anchor*3], py = positions[anchor*3+1], pz = positions[anchor*3+2];
+  const cost = evalQSum(quadrics, anchor, other, px, py, pz);
+  const dx = positions[other*3] - px, dy = positions[other*3+1] - py, dz = positions[other*3+2] - pz;
+  heap.push(cost + (dx*dx + dy*dy + dz*dz) * 1e-8,
+            anchor, other, version[anchor], version[other], px, py, pz);
 }
 
 // ── Indexed <-> Non-indexed conversion ──────────────────────────────────────
