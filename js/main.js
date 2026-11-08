@@ -67,6 +67,7 @@ let currentBounds     = null;   // bounds of the original geometry
 let currentPoseRot    = new THREE.Quaternion();
 let currentPoseTrans  = new THREE.Vector3();
 let _activeStep       = null;   // tool rail step (js/toolRail.js)
+let _keepCameraNext   = false;  // scale/undo: the next material reload keeps the view
 let modelScale        = { x: 1, y: 1, z: 1 };   // Model ▸ Scale, relative to the size the model was loaded with
 // Every move of the loaded geometry (rotate, place on face, scale, re-centre)
 // folded into one matrix: loaded positions → current positions. Undo/redo
@@ -447,6 +448,19 @@ function _applyModelScale(f) {
   if (_AXES.every(a => Math.abs(f[a] - 1) < 1e-9)) { _syncScaleFields(); return; }
   if (rotateActive) toggleRotateMode(false);
   _flushUndoCapture();   // a pending settings change stays its own undo step
+  // Export resolution follows the size: the load-time default for the new
+  // size when it was still the default, else the user's value scaled along.
+  if (currentBounds) {
+    const dflt = (sz) => Math.max(0.05, Math.min(5.0, +(Math.hypot(sz.x, sz.y, sz.z) / 250).toFixed(2)));
+    const newSize = { x: currentBounds.size.x * f.x, y: currentBounds.size.y * f.y, z: currentBounds.size.z * f.z };
+    const k = Math.cbrt(f.x * f.y * f.z);
+    const res = Math.abs(settings.refineLength - dflt(currentBounds.size)) < 1e-6
+      ? dflt(newSize)
+      : Math.max(0.01, Math.min(5.0, +(settings.refineLength * k).toFixed(2)));
+    settings.refineLength = res;
+    refineLenSlider.value = res;
+    refineLenVal.value = res;
+  }
   currentGeometry.scale(f.x, f.y, f.z);
   _geoMatrix.premultiply(_m4.makeScale(f.x, f.y, f.z));
   currentPoseTrans.set(currentPoseTrans.x * f.x, currentPoseTrans.y * f.y, currentPoseTrans.z * f.z);
@@ -455,7 +469,10 @@ function _applyModelScale(f) {
   currentGeometry.computeVertexNormals();
   exportToken++;
   _clearColorResult();
-  _rotateFinalize({ keepCamera: true });
+  // Small changes (dragging a handle) keep the view; a jump in size (a model
+  // in metres scaled to mm) re-frames it.
+  const grow = Math.max(f.x, f.y, f.z);
+  _rotateFinalize({ keepCamera: grow > 0.5 && grow < 2 });
 }
 
 function _onScaleInput(inp) {
@@ -1339,7 +1356,7 @@ scaleUVal.value = fmtScaleVal(posToScale(parseFloat(scaleUSlider.value)));
 scaleVVal.value = fmtScaleVal(posToScale(parseFloat(scaleVSlider.value)));
 
 // Load geometry immediately — don't wait for textures
-loadDefaultCube();
+loadDefaultModel(await _defaultModelGeometry());
 
 // Restore the map from the last session: a texture from the user's library if the browser still has
 // it, else the preset, else the default. If the user had ANY map active last session (preset or a
@@ -2585,6 +2602,7 @@ function _createPaintTree(adjData) {
     adjacency: adjData.adjacency, faceNormals: adjData.faceNormals,
   });
   for (const L of layers) paintTree.addLayer(L.id);
+  for (const id of FILAMENT_PAINT_IDS) paintTree.addLayer(id);   // Colors ▸ Paint filaments
   _dropPaintGeometry();
 }
 
@@ -2611,8 +2629,8 @@ function _syncTreeLayers() {
 /** Paint-tree slots a stroke writes: the active layer's mask, or while painting filament k its slot (the others are erased under the brush, a face has one filament). */
 function _strokeSlots() {
   if (!_filamentPaint) return [{ slot: _activeSlot(), erase: eraseMode }];
-  return FILAMENT_PAINT_IDS.map((id, k) => ({ slot: paintTree.layerSlot(id), erase: eraseMode || k + 1 !== _filamentPaint }))
-    .filter(x => x.slot >= 0);
+  // addLayer returns the existing slot, or adds a missing one.
+  return FILAMENT_PAINT_IDS.map((id, k) => ({ slot: paintTree.addLayer(id), erase: eraseMode || k + 1 !== _filamentPaint }));
 }
 
 // ── Colors ▸ Paint filaments: UI ─────────────────────────────────────────────
@@ -4180,7 +4198,15 @@ function _rotateFinalize({ keepCamera = false } = {}) {
 
   // Full refresh
   currentBounds = computeBounds(currentGeometry);
+  // The 3D preview mesh was subdivided from the old pose: drop it (rebuilt below).
+  const hadDispPreview = settings.useDisplacement;
+  cancelDisplacementPreviewBuild();
+  if (dispPreviewGeometry) { dispPreviewGeometry.dispose(); dispPreviewGeometry = null; }
+  dispPreviewParentMap = null;
+  dispPreviewEdgeInfo = null;
+
   loadGeometry(currentGeometry, undefined, { keepCamera });
+  _keepCameraNext = keepCamera;   // updatePreview reloads the mesh with the new material
 
   // Geometry was reauthored (displacement baked in); cylinder silhouette
   // bitmap is stale. Settings are kept so the user's axis placement still
@@ -4209,6 +4235,8 @@ function _rotateFinalize({ keepCamera = false } = {}) {
   checkAmplitudeWarning();
   checkResolutionWarning();
   updatePreview();
+  _keepCameraNext = false;
+  if (hadDispPreview) toggleDisplacementPreview(true);
   const b = currentBounds.size;
   _setMeshInfo(getTriangleCount(currentGeometry),
     (currentGeometry.attributes.position.array.byteLength / 1024 / 1024).toFixed(2),
@@ -4440,10 +4468,23 @@ function formatM(n) {
 
 // ── STL loading ───────────────────────────────────────────────────────────────
 
-function loadDefaultCube() {
-  // Create a 50×50×50 mm box; convert to non-indexed so it behaves like a
-  // real STL (buildAdjacency and displacement expect non-indexed geometry).
-  let geo = new THREE.BoxGeometry(50, 50, 50).toNonIndexed();
+/** The bundled start model (models/bowl.obj, a 120 mm bowl), or null when it can't be loaded. */
+async function _defaultModelGeometry() {
+  try {
+    const r = await fetch('models/bowl.obj');
+    if (!r.ok) return null;
+    const { geometry } = await loadModelFile(new File([await r.blob()], 'bowl.obj'));
+    return geometry;
+  } catch {
+    return null;
+  }
+}
+
+/** Show the start model: the bundled bowl, or a 50 mm cube when it is missing. */
+function loadDefaultModel(bowl = null) {
+  // A cube is built non-indexed so it behaves like a real STL
+  // (buildAdjacency and displacement expect non-indexed geometry).
+  let geo = bowl || new THREE.BoxGeometry(50, 50, 50).toNonIndexed();
   geo.computeBoundingBox();
   geo.computeVertexNormals();
 
@@ -4458,8 +4499,8 @@ function loadDefaultCube() {
   currentPoseTrans = new THREE.Vector3();
   modelScale       = { x: 1, y: 1, z: 1 };
   _geoMatrix.identity();
-  currentStlName  = 'cube_50x50x50';
-  currentStlExt   = '.stl';
+  currentStlName  = bowl ? 'bowl_120mm' : 'cube_50x50x50';
+  currentStlExt   = bowl ? '.obj' : '.stl';
   checkAmplitudeWarning();
 
   loadGeometry(geo);
@@ -5934,7 +5975,7 @@ function updatePreview() {
   const preview = _previewLayers();
   if (!previewMaterial) {
     previewMaterial = createPreviewMaterial(preview.list, _materialSettings(preview));
-    loadGeometry(activeGeo, previewMaterial);
+    loadGeometry(activeGeo, previewMaterial, { keepCamera: _keepCameraNext });
   } else {
     updateMaterial(previewMaterial, preview.list, _materialSettings(preview));
     _updateColorStats();
