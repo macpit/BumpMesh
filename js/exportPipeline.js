@@ -35,6 +35,9 @@
  *                   blendAdd  boolean
  *                   stampDepth  a stamp's occlusion depth map
  *                             (mapping.js buildStampDepth) or null
+ *   filamentFaces Uint8Array|null per source face, painted filament
+ *                 (1-based, 0 = none; Colors ▸ Paint filaments). Export mode:
+ *                 overrides the colorMode labels face by face
  *   settings      plain settings snapshot (structured-clone safe)
  *   bounds        {min,max,size,center} as {x,y,z} objects or Vector3s
  *   regularizeOpts  opts object for regularizeMesh
@@ -49,7 +52,8 @@
  *   faceParentId: Int32Array|null,   // bake mode only
  *   repairStats: object|null,        // export mode, when repair ran
  *   faceLabels: Uint8Array|null,     // export mode with settings.colorMode 'textured'
- *                                    // or 'height': filament - 1 per face, output face order
+ *                                    // or 'height', or painted filaments: filament - 1
+ *                                    // per face, output face order
  * }>}
  */
 
@@ -260,7 +264,10 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
     // Soft-brush paint (and every layer's mask) reaches the refined mesh
     // through the parent-face map, so it needs real parents in export mode too.
     const layers = Array.isArray(input.layers) && input.layers.length ? input.layers : null;
-    const trackParents = mode === 'bake' || !!input.softExclude || !!layers;
+    // Painted filaments (Colors ▸ Paint filaments) are per input face, so
+    // they need the parent map as well.
+    const filamentFaces = mode === 'export' && input.filamentFaces ? input.filamentFaces : null;
+    const trackParents = mode === 'bake' || !!input.softExclude || !!layers || !!filamentFaces;
 
     // Regularize sub-slivers, then re-subdivide stretched edges. Skipped when
     // the Advanced toggle is off. Without parent tracking a zero parent map
@@ -362,6 +369,19 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
     subdivided.dispose();
     subdivided = null;
 
+    // Painted filament per displaced face (displacement keeps face order).
+    let paintedFil = null;
+    if (filamentFaces) {
+      paintedFil = new Uint8Array(faceParentId.length);
+      let any = false;
+      for (let t = 0; t < paintedFil.length; t++) {
+        const v = filamentFaces[faceParentId[t]] || 0;
+        paintedFil[t] = v;
+        if (v) any = true;
+      }
+      if (!any) paintedFil = null;
+    }
+
     // Face labels for the 3MF filament split: label = filament - 1. Every
     // later stage either keeps face order (bottom clamp/snap) or carries the
     // labels itself (decimate, resolveTJunctions).
@@ -385,12 +405,25 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
       displaced.dispose();
       displaced = flatGeometry(cut.positions);
       faceLabels = cut.labels;
+      if (paintedFil) {
+        const remapped = new Uint8Array(cut.parent.length);
+        for (let t = 0; t < remapped.length; t++) remapped[t] = paintedFil[cut.parent[t]];
+        paintedFil = remapped;
+      }
       if (lockedFaces) {
         const remapped = new Uint8Array(cut.parent.length);
         for (let t = 0; t < remapped.length; t++) remapped[t] = lockedFaces[cut.parent[t]];
         lockedFaces = remapped;
       }
       if (shouldAbort()) return null;
+    }
+
+    // Painted filaments win over the automatic split; with Assign off the
+    // rest of the model stays on filament 1.
+    if (paintedFil) {
+      if (!faceLabels) faceLabels = new Uint8Array(paintedFil.length);
+      else faceLabels = new Uint8Array(faceLabels);
+      for (let t = 0; t < paintedFil.length; t++) if (paintedFil[t]) faceLabels[t] = paintedFil[t] - 1;
     }
 
     const dispTriCount = displaced.attributes.position.count / 3;

@@ -799,6 +799,24 @@
           </select>
         </div>
         <div id="color-filaments" class="color-filaments hidden"></div>
+        <!-- Paint filaments (js/main.js _setFilamentPaint): the masking brush paints filament k into its own paint layer -->
+        <h3 class="panel-subsection-heading has-tip fpaint-heading" data-i18n="fpaint.heading" data-i18n-title="fpaint.tip"
+          title="Paint filaments directly onto the model, like the slicer's color painting. Painted areas keep their filament whatever Assign does; the rest follows Assign (or filament 1 when it is off). Saved with the project and exported in the 3MF.">Paint filaments</h3>
+        <div id="fpaint-chips" class="fpaint-chips" role="group" data-i18n-aria-label="fpaint.heading" aria-label="Paint filaments"></div>
+        <div class="excl-seg fpaint-tools">
+          <button type="button" id="fpaint-brush" class="excl-seg-btn" aria-pressed="false" data-i18n="fpaint.brush" data-i18n-title="fpaint.brushTitle" title="Paint with the circle brush">Brush</button>
+          <button type="button" id="fpaint-fill" class="excl-seg-btn" aria-pressed="false" data-i18n="fpaint.fill" data-i18n-title="fpaint.fillTitle" title="Fill a connected surface up to a sharp edge (Max angle under Mask)">Fill</button>
+          <button type="button" id="fpaint-erase" class="excl-seg-btn" aria-pressed="false" data-i18n="fpaint.erase" data-i18n-title="fpaint.eraseTitle" title="Remove painted filament">Eraser</button>
+        </div>
+        <div class="form-row slider-row">
+          <label for="fpaint-size" data-i18n="labels.size">Size</label>
+          <input type="range" id="fpaint-size" min="0.2" max="100" step="0.2" value="10" />
+          <input type="number" class="val" id="fpaint-size-val" value="10" min="0.2" max="100" step="0.2" />
+        </div>
+        <div class="fpaint-foot">
+          <span id="fpaint-hint" class="fpaint-hint" data-i18n="fpaint.hint">Pick a filament, then paint on the model.</span>
+          <button type="button" id="fpaint-clear" class="scale-reset-btn" data-i18n="fpaint.clear">Clear painting</button>
+        </div>
         <p class="advanced-blurb color-stl-note" data-i18n="steps.colorsStlNote">Colors are saved in the 3MF only; an STL has a single color.</p>
       </section>
 

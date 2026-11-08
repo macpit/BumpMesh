@@ -448,6 +448,7 @@ const vertexShader = /* glsl */`
   attribute float boundaryMaskTypeAttr;
   attribute vec2  outlineWrap;    // outline wrap: (share of the outline, rise) — outlineWrap.js
   attribute vec2  unfoldUV;       // unfold: unfolded coordinates in mm — unfold.js
+  attribute float filamentId;     // painted filament (1–4, flat per face), 0 = none
 
   varying vec2  vOutlineWrap;
   varying vec2  vUnfoldUV;
@@ -461,6 +462,7 @@ const vertexShader = /* glsl */`
   varying float vAngleMask;   // angle mask (hard per-face)
   varying float vMaskType;    // boundary mask type (0 = user mask, 1 = angle mask)
   varying float vHeightMm;    // 3D preview: composited height at the vertex (mm)
+  varying float vFilament;    // painted filament, 0 = none
 
   #include <clipping_planes_pars_vertex>
 
@@ -491,6 +493,7 @@ const vertexShader = /* glsl */`
     vAngleMask    = angleMask;
     vMaskType     = boundaryMaskTypeAttr;
     vHeightMm     = 0.0;
+    vFilament     = filamentId;
 
     if (useDisplacement == 1) {
       float h = compositeHeight(position, safeN, safeN, layerMask * layerFalloff * angleMask);
@@ -535,6 +538,7 @@ const fragmentShader = /* glsl */`
   uniform vec3      colorThresholds;      // normalised 0..1, first colorBandCount-1 used
   uniform vec2      colorHeightRange;     // mm range that maps to 0..1 (heightRangeMm)
   uniform vec3      colorSwatch[4];       // filament 1..4
+  uniform int       filamentPaintOn;      // 1 = painted filaments (filamentId) override the color
 
   vec3 swatchColor(int i) {
     if (i <= 0) return colorSwatch[0];
@@ -555,6 +559,7 @@ const fragmentShader = /* glsl */`
   varying float vAngleMask;
   varying float vMaskType;
   varying float vHeightMm;
+  varying float vFilament;
 
   #include <clipping_planes_pars_fragment>
 
@@ -689,6 +694,7 @@ const fragmentShader = /* glsl */`
       }
       tealBase = swatchColor(band);
     }
+    if (filamentPaintOn == 1 && vFilament > 0.5) tealBase = swatchColor(int(vFilament + 0.5) - 1);
     // Single layer: the familiar orange (painted out) and dark grey (angle
     // mask). Several layers: everything the active layer does not cover is a
     // plain neutral grey, so "teal = active layer" reads at a glance and the
@@ -853,7 +859,8 @@ export function updateMaterial(material, layers, settings) {
   u.layeredTint.value = settings.layeredTint ? 1 : 0;
   const c = settings.filamentColors || null;
   u.colorMode.value = c ? (c.mode === 'height' ? 2 : c.mode === 'textured' ? 1 : 0) : 0;
-  if (c && u.colorMode.value) {
+  u.filamentPaintOn.value = c && c.paint ? 1 : 0;
+  if (c) {
     u.colorBandCount.value = c.mode === 'height' ? c.bands : 2;
     u.colorThresholds.value.set(c.thresholds[0] ?? 2, c.thresholds[1] ?? 2, c.thresholds[2] ?? 2);
     u.colorHeightRange.value.set(c.range.min, c.range.max);
@@ -920,6 +927,7 @@ function buildUniforms() {
     boundaryFalloffCurve: { value: 0 },
     layeredTint:          { value: 0 },
     colorMode:            { value: 0 },
+    filamentPaintOn:      { value: 0 },
     colorBandCount:       { value: 2 },
     colorThresholds:      { value: new THREE.Vector3(0.5, 2, 2) },
     colorHeightRange:     { value: new THREE.Vector2(0, 1) },

@@ -21,6 +21,7 @@ Nothing here is meant to compete with the original. **If wanted, I am happy to o
 The list grows with every change; newest first within each group.
 
 ### Filament colors (3MF)
+- **Paint filaments** — paint filament 1–4 straight onto the model with a brush or fill, like the slicer's color painting (Colors step). Painted areas keep their filament whatever the automatic split does, borders are cut exactly along the brush, and the paint is saved with the project, undoable and exported in the 3MF.
 - **Textured faces as their own filament** ([upstream #64](https://github.com/CNCKitchen/stlTexturizer/issues/64)) — the 3MF export paints textured faces as filament 2 and untextured faces as filament 1. Bambu Studio, OrcaSlicer and PrusaSlicer load it as multi-material painting.
 - **Color by height** — up to 4 filaments split along the texture's height contours (for example green valleys, yellow ridges). Triangles are cut exactly along the contour lines, so the color borders follow the relief instead of jumping from triangle to triangle; the cut mesh stays watertight.
 - **Decimation keeps the color borders** — vertices on a border between two filaments stay where they are, so the triangle count still reaches the target without the colors bleeding.

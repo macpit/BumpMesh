@@ -104,6 +104,12 @@ let triangleAdjacency  = null;        // Array from buildAdjacency
 let triangleCentroids  = null;        // Float32Array from buildAdjacency
 let triangleFaceNormals = null;       // Float32Array — local-space unit face normal per tri
 let exclusionTool      = null;        // 'brush' | 'bucket' | null
+// Colors ▸ Paint filaments: the masking brush/fill paint filament k (1–4)
+// into its own paint-tree layer instead of the active texture layer's mask.
+const FILAMENT_PAINT_IDS = ['fil1', 'fil2', 'fil3', 'fil4'];
+let _filamentPaint      = 0;           // filament being painted, 0 = off
+let _filamentPainted    = false;       // some face carries painted filament (preview + export)
+let _fpaintTool         = 'brush';     // last tool picked in the Paint filaments row
 let eraseMode          = false;
 let brushIsRadius      = true;
 let brushRadius        = 5.0;
@@ -388,6 +394,7 @@ function _setMeshInfo(triCount, mb, sx, sy, sz) {
   const fileName = currentStlName ? `${currentStlName}${currentStlExt}` : '';
   meshInfo.textContent = fileName ? `${fileName} · ${stats}` : stats;
   _syncScaleFields();
+  _syncFilamentPaintUI();
 }
 
 // ── Model ▸ Scale ────────────────────────────────────────────────────────────
@@ -1989,10 +1996,15 @@ function wireEvents() {
     if (e.target === aboutOverlay) aboutOverlay.classList.add('hidden');
   });
 
+  _wireFilamentPaint();
+
   // ── Tool rail: one step's settings at a time ──
   initToolRail({
     gallery,
-    onLeave: (step) => { if (step === 'mask' && exclusionTool) setExclusionTool(null); },
+    onLeave: (step) => {
+      if (step === 'mask' && exclusionTool && !_filamentPaint) setExclusionTool(null);
+      if (step === 'colors' && _filamentPaint) _setFilamentPaint(0, null);
+    },
     onShow: (step) => { _activeStep = step; _syncScaleGizmo(); },
   });
 
@@ -2255,7 +2267,7 @@ function wireEvents() {
       if (triIdx >= 0) {
         // Bucket fill works on base faces: every leaf of a filled face is painted.
         const filled = bucketFill(triIdx, triangleAdjacency, bucketThreshold);
-        paintTree.paintFaces(_activeSlot(), filled, eraseMode);
+        for (const { slot, erase } of _strokeSlots()) paintTree.paintFaces(slot, filled, erase);
         refreshExclusionOverlay();
         _lastHoverTriIdx = -1;
         setHoverPreview(null);
@@ -2423,7 +2435,7 @@ function setExclusionTool(tool) {
 
   // Activating any masking tool engages the masking UI — highlight the mode
   // the paint will apply under (exclude unless include-only was chosen).
-  if (exclusionTool && !maskModeChosen) {
+  if (exclusionTool && !maskModeChosen && !_filamentPaint) {
     maskModeChosen = true;
     updateMaskModeButtons();
   }
@@ -2454,6 +2466,8 @@ function setExclusionTool(tool) {
   }
   // Re-enable controls if tool was deactivated mid-paint
   if (!exclusionTool) {
+    if (_filamentPaint) { _filamentPaint = 0; eraseMode = false; }
+    _syncFilamentPaintUI();
     isPainting = false;
     getControls().enabled = true;
     const dbg = document.getElementById('masking-tri-debug');
@@ -2588,9 +2602,129 @@ function _rebuildPaintTreeKeepingPaint(adjData) {
 /** Keep the tree's layer slots in step with `layers` (by id). */
 function _syncTreeLayers() {
   if (!paintTree) return;
-  const ids = new Set(layers.map(L => L.id));
+  const ids = new Set([...layers.map(L => L.id), ...FILAMENT_PAINT_IDS]);
   for (const tl of [...paintTree.layers]) if (!ids.has(tl.id)) paintTree.removeLayer(tl.id);
   for (const L of layers) paintTree.addLayer(L.id);
+  for (const id of FILAMENT_PAINT_IDS) paintTree.addLayer(id);
+}
+
+/** Paint-tree slots a stroke writes: the active layer's mask, or while painting filament k its slot (the others are erased under the brush, a face has one filament). */
+function _strokeSlots() {
+  if (!_filamentPaint) return [{ slot: _activeSlot(), erase: eraseMode }];
+  return FILAMENT_PAINT_IDS.map((id, k) => ({ slot: paintTree.layerSlot(id), erase: eraseMode || k + 1 !== _filamentPaint }))
+    .filter(x => x.slot >= 0);
+}
+
+// ── Colors ▸ Paint filaments: UI ─────────────────────────────────────────────
+
+/** Start painting filament k (1–4) with tool 'brush' | 'bucket', or erase (k = 0, erase = true); null tool stops. */
+function _setFilamentPaint(k, tool, erase = false) {
+  if (!currentGeometry || !paintTree) return;
+  if (!tool) { if (_filamentPaint) setExclusionTool(null); return; }
+  _filamentPaint = k || _filamentPaint || 1;
+  eraseMode = erase;
+  if (tool === 'brush') brushIsRadius = true;
+  if (exclusionTool !== tool) setExclusionTool(tool);
+  _syncFilamentPaintUI();
+}
+
+function _syncFilamentPaintUI() {
+  const box = document.getElementById('fpaint-chips');
+  if (!box) return;
+  const active = !!_filamentPaint && !!exclusionTool;
+  if (box.children.length !== FILAMENT_PAINT_IDS.length) {
+    box.replaceChildren();
+    FILAMENT_PAINT_IDS.forEach((_, k) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'fpaint-chip';
+      b.dataset.k = String(k + 1);
+      b.innerHTML = '<span class="fpaint-swatch"></span><span class="fpaint-num"></span>';
+      b.addEventListener('click', () => {
+        const kk = k + 1;
+        if (active && _filamentPaint === kk && !eraseMode) { _setFilamentPaint(0, null); return; }
+        _setFilamentPaint(kk, _fpaintTool, false);
+      });
+      box.appendChild(b);
+    });
+  }
+  [...box.children].forEach((b, k) => {
+    b.querySelector('.fpaint-swatch').style.background = settings.filamentColors[k] || '#888';
+    b.querySelector('.fpaint-num').textContent = String(k + 1);
+    b.title = t('ui.filamentN', { n: k + 1 });
+    const on = active && !eraseMode && _filamentPaint === k + 1;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+    b.disabled = !currentGeometry;
+  });
+  const set = (id, on) => { const el = document.getElementById(id); el.classList.toggle('active', on); el.setAttribute('aria-pressed', String(on)); el.disabled = !currentGeometry; };
+  set('fpaint-brush', _fpaintTool === 'brush');
+  set('fpaint-fill', _fpaintTool === 'bucket');
+  set('fpaint-erase', active && eraseMode);
+  const hint = document.getElementById('fpaint-hint');
+  if (hint) hint.textContent = active
+    ? t(eraseMode ? 'fpaint.hintErasing' : 'fpaint.hintPainting', { n: _filamentPaint })
+    : t('fpaint.hint');
+  const sz = document.getElementById('fpaint-size'), szv = document.getElementById('fpaint-size-val');
+  if (sz && document.activeElement !== szv) { sz.value = String(brushRadius * 2); szv.value = String(_round(brushRadius * 2, 1)); }
+  const any = !!paintTree && FILAMENT_PAINT_IDS.some(id => { const sl = paintTree.layerSlot(id); return sl >= 0 && paintTree.hasPaint(sl); });
+  document.getElementById('fpaint-clear').disabled = !any;
+}
+
+function _wireFilamentPaint() {
+  const pick = (tool) => {
+    _fpaintTool = tool;
+    if (_filamentPaint && exclusionTool) _setFilamentPaint(_filamentPaint, tool, eraseMode);
+    else _syncFilamentPaintUI();
+  };
+  document.getElementById('fpaint-brush').addEventListener('click', () => pick('brush'));
+  document.getElementById('fpaint-fill').addEventListener('click', () => pick('bucket'));
+  document.getElementById('fpaint-erase').addEventListener('click', () => {
+    if (_filamentPaint && exclusionTool && eraseMode) { _setFilamentPaint(0, null); return; }
+    _setFilamentPaint(_filamentPaint || 1, _fpaintTool, true);
+  });
+  const sz = document.getElementById('fpaint-size'), szv = document.getElementById('fpaint-size-val');
+  const setSize = (d) => {
+    d = Math.max(0.2, Math.min(100, d || 10));
+    brushRadius = d / 2;
+    sz.value = String(d); szv.value = String(_round(d, 1));
+    exclBrushRadiusSlider.value = String(d); exclBrushRadiusVal.value = String(d);
+  };
+  sz.addEventListener('input', () => setSize(parseFloat(sz.value)));
+  szv.addEventListener('change', () => setSize(parseFloat(szv.value)));
+  document.getElementById('fpaint-clear').addEventListener('click', () => {
+    if (!paintTree) return;
+    for (const id of FILAMENT_PAINT_IDS) { const sl = paintTree.layerSlot(id); if (sl >= 0) paintTree.clearLayer(sl); }
+    refreshExclusionOverlay();
+    _syncPreviewMaterial();
+    _syncFilamentPaintUI();
+    _commitUndoCapture();
+  });
+  _syncFilamentPaintUI();
+}
+
+function _isFilamentSlot(slot) {
+  return !!paintTree && slot >= 0 && FILAMENT_PAINT_IDS.includes(paintTree.layers[slot]?.id);
+}
+
+/** Painted filament per face of `geometry` (0 = not painted), or null when nothing is painted. */
+function _filamentFacesOn(geometry) {
+  if (!paintTree || !geometry) return null;
+  let out = null;
+  FILAMENT_PAINT_IDS.forEach((id, k) => {
+    const slot = paintTree.layerSlot(id);
+    if (slot < 0 || !paintTree.hasPaint(slot)) return;
+    const { paint } = _layerPaintOn(slot, geometry);
+    if (!paint) return;
+    const n = paint.length / 3;
+    if (!out) out = new Uint8Array(n);
+    for (let t = 0; t < n; t++) {
+      // Hard brush: a leaf is painted or not; on a refinement (3D preview) take the majority of its corners.
+      const c = (paint[t * 3] >= 0.5) + (paint[t * 3 + 1] >= 0.5) + (paint[t * 3 + 2] >= 0.5);
+      if (c >= 2) out[t] = k + 1;
+    }
+  });
+  return out;
 }
 
 function _activeSlot() { return paintTree ? paintTree.layerSlot(layers[activeLayer].id) : -1; }
@@ -2662,7 +2796,7 @@ function _layerPaintOn(slot, geometry) {
   const hit = _paintCoverCache.get(key);
   // A stroke only changes the active layer's paint; the others' is valid
   // until the structure (and with it the flattened mesh) changes.
-  const version = slot === _activeSlot() ? paintTree.paintVersion : -1 - paintTree.structureVersion;
+  const version = (slot === _activeSlot() || _isFilamentSlot(slot)) ? paintTree.paintVersion : -1 - paintTree.structureVersion;
   if (hit && hit.version === version && hit.geometry === geometry) return hit;
   let r;
   if (geometry === paintGeometry && paintFlat) r = paintTree.flatPaint(slot, paintFlat);
@@ -2741,18 +2875,22 @@ function _brushEdgeLimit() {
 // segment from there to hit.point, so fast strokes stay continuous.
 function _paintSingleHit(hit, mesh, strokeFrom = null) {
   if (!paintTree) return;
-  const slot = _activeSlot();
   const seedFace = _baseFaceOf(hit.faceIndex, mesh.geometry);
-  if (brushIsRadius) {
-    paintTree.paintStroke({
-      slot, seedFace,
-      from: strokeFrom || hit.point, to: hit.point,
-      radius: brushRadius, view: _viewDirFor(hit.point),
-      hardness: brushHardness, erase: eraseMode,
-      edgeLimit: _brushEdgeLimit(), whole: !brushPrecision,
-    });
-  } else {
-    paintTree.paintFaces(slot, [seedFace], eraseMode);
+  // Filament paint is always hard and refined (exact borders for the slicer).
+  const hardness = _filamentPaint ? 1 : brushHardness;
+  for (const { slot, erase } of _strokeSlots()) {
+    if (brushIsRadius) {
+      paintTree.paintStroke({
+        slot, seedFace,
+        from: strokeFrom || hit.point, to: hit.point,
+        radius: brushRadius, view: _viewDirFor(hit.point),
+        hardness, erase,
+        edgeLimit: _filamentPaint ? Math.max(0.02, brushRadius / 5) : _brushEdgeLimit(),
+        whole: _filamentPaint ? false : !brushPrecision,
+      });
+    } else {
+      paintTree.paintFaces(slot, [seedFace], erase);
+    }
   }
 }
 
@@ -3065,7 +3203,8 @@ function _pipelineInputs() {
       : null;
     const softExclude = softValues ? buildSoftExclusion(vertId, softValues, excluded, selectionMode) : null;
     const e = parts[0].entry;
-    return { positions, faceWeights, softExclude, imageData: e.imageData, imgWidth: e.width, imgHeight: e.height, layers: null, label: _mapLabel(activeMapEntry) };
+    return { positions, faceWeights, softExclude, imageData: e.imageData, imgWidth: e.width, imgHeight: e.height, layers: null, label: _mapLabel(activeMapEntry),
+      filamentFaces: _filamentFacesOn(geometry) };
   }
 
   const hardFlags = [];
@@ -3103,6 +3242,7 @@ function _pipelineInputs() {
     imageData: null, imgWidth: 0, imgHeight: 0,
     layers: out,
     label: parts.length ? (parts.length === 1 ? _mapLabel(parts[0].entry) : `${parts.length}layers`) : 'layers',
+    filamentFaces: _filamentFacesOn(geometry),
   };
 }
 
@@ -4923,6 +5063,18 @@ function updateFaceMask(geometry, { forceFalloff = false } = {}) {
     hards.push(r.hardMasked);
   }
 
+  // Painted filaments (Colors ▸ Paint filaments): flat per face, 0 = none.
+  const filAttr = _ensureAttr(geometry, 'filamentId', posCount, 1, 0.0);
+  const fil = _filamentFacesOn(geometry);
+  filAttr.array.fill(0);
+  if (fil) for (let t = 0; t < fil.length; t++) if (fil[t]) filAttr.array.fill(fil[t], t * 3, t * 3 + 3);
+  filAttr.needsUpdate = true;
+  const painted = !!fil && fil.some(v => v > 0);
+  if (painted !== _filamentPainted) {
+    _filamentPainted = painted;
+    queueMicrotask(() => _renderFilamentColors());   // material, result button, chips
+  }
+
   const maskAttr = _ensureAttr(geometry, 'layerMask', posCount, 4, 0.0);
   const m = maskAttr.array;
   const nSlots = covers.length;
@@ -5445,8 +5597,9 @@ function _materialSettings(preview) {
     unfoldReady:      _ufReadyOn(_displayGeometry()),
     outlineWrapMean:  _owWrap ? _owWrap.meanLength : 1,
     // Filament colors of the 3MF export, shown on the model.
-    filamentColors: settings.colorMode === 'off' ? null : {
+    filamentColors: (settings.colorMode === 'off' && !_filamentPainted) ? null : {
       mode: settings.colorMode,
+      paint: _filamentPainted,
       bands: settings.colorBands,
       thresholds: bandThresholds(settings.colorBands, settings.colorThresholds),
       range: heightRangeMm(settings, preview.list.map(l => ({ settings: l }))),
@@ -5480,6 +5633,7 @@ function _renderFilamentColors() {
     swatch.addEventListener('input', () => {
       settings.filamentColors = settings.filamentColors.map((c, k) => (k === i ? swatch.value : c));
       _syncPreviewMaterial();
+      _syncFilamentPaintUI();
     });
     const label = document.createElement('span');
     label.className = 'filament-label';
@@ -5518,7 +5672,7 @@ function _renderFilamentColors() {
   // The result view lives in the Export step: it shows what the export will write.
   const resultSlot = document.getElementById('color-result-slot');
   resultSlot.replaceChildren();
-  if (mode !== 'off') {
+  if (mode !== 'off' || _filamentPainted) {
     const btn = document.createElement('button');
     btn.id = 'color-result-btn';
     btn.className = 'export-btn color-result-btn';
@@ -5540,6 +5694,7 @@ function _renderFilamentColors() {
   }
   _syncPreviewMaterial();
   _updateColorStats();
+  _syncFilamentPaintUI();
 }
 
 // Surface area of the model that gets textured vs. stays smooth (angle masks,
@@ -5635,7 +5790,7 @@ async function _showColorResult() {
     const result = await runPipeline({
       positions: inputs.positions, faceWeights: inputs.faceWeights, softExclude: inputs.softExclude,
       imageData: inputs.imageData, imgWidth: inputs.imgWidth, imgHeight: inputs.imgHeight,
-      layers: inputs.layers,
+      layers: inputs.layers, filamentFaces: inputs.filamentFaces,
       settings: _owSettings(settings),
       bounds: currentBounds, regularizeOpts: _regularizeOpts(), mode: 'export',
     }, _onExportPipelineEvent, () => exportToken !== myToken);
@@ -6082,6 +6237,7 @@ async function handleExport(format = 'stl') {
       imgHeight: inputs.imgHeight,
       layers: inputs.layers,
       // Face labels only matter for the 3MF writer; STL exports skip them.
+      filamentFaces: format === '3mf' ? inputs.filamentFaces : null,
       settings: { ..._owSettings(settings), colorMode: format === '3mf' ? settings.colorMode : 'off' },
       bounds: currentBounds,
       regularizeOpts: _regularizeOpts(),

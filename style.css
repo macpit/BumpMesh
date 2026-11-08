@@ -416,6 +416,27 @@ main.sidebar-collapsed .rail-btn.active { background: none; border-color: transp
 .view-gizmo .vg-home { fill: var(--text-muted); opacity: 0.7; }
 .view-gizmo .vg-home:hover { fill: var(--accent); opacity: 1; }
 
+/* ── Colors ▸ Paint filaments ────────────────────────────────────────── */
+.fpaint-heading { margin-top: 16px; }
+.fpaint-chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+.fpaint-chip {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  height: 34px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer;
+}
+.fpaint-chip:hover:not(:disabled) { border-color: var(--accent); }
+.fpaint-chip.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+.fpaint-chip:disabled { opacity: 0.4; cursor: default; }
+.fpaint-swatch { width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.25); }
+.fpaint-tools { margin-bottom: 8px; }
+.fpaint-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 4px; }
+.fpaint-hint { font-size: 11px; color: var(--text-muted); }
+
 /* ── Main layout ─────────────────────────────────────────────────────── */
 main {
   position: relative;
