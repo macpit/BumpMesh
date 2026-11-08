@@ -524,6 +524,21 @@
               <span data-i18n="orn.ringFlip">Turn over (180°)</span>
             </label>
           </div>
+          <div id="orn-bowl-box" hidden>
+            <div class="form-row slider-row">
+              <label for="orn-bowl-dist" data-i18n="orn.bowlDist" data-i18n-title="orn.bowlDistTitle" title="How the image spreads over the bowl: to the right the image's centre takes more of the bottom, to the left the outer rings take more of the wall. Unpins the height lines.">Bottom ↔ wall</label>
+              <input type="range" id="orn-bowl-dist" min="-1" max="1" step="0.05" value="0" />
+              <input type="number" class="val" id="orn-bowl-dist-val" min="-1" max="1" step="0.05" value="0" />
+            </div>
+            <div class="form-row orn-bowl-row">
+              <label class="checkbox-label" for="orn-bowl-show" data-i18n-title="orn.bowlShowTitle" title="Show the height lines on the model: the circles of the image where they land.">
+                <input type="checkbox" id="orn-bowl-show" checked />
+                <span data-i18n="orn.bowlShow">Height lines</span>
+              </label>
+              <button type="button" id="orn-bowl-reset" class="scale-reset-btn" data-i18n="orn.bowlReset" data-i18n-title="orn.bowlResetTitle" title="Back to the circles found in the image, spread evenly.">Reset</button>
+            </div>
+            <p class="orn-hint" data-i18n="orn.bowlHint">Drag a line on the model to move that circle of the image there; the image stretches between the lines. Double-click adds a line, dragging one off the model removes it.</p>
+          </div>
           <div class="form-row slider-row" id="orn-ring-dia-row">
             <label for="orn-ring-dia" data-i18n="orn.ringDia" data-i18n-title="orn.ringDiaTitle" title="Outer diameter of the ring image on the model, in mm.">Diameter (mm)</label>
             <input type="range" id="orn-ring-dia" min="5" max="300" step="0.5" value="80" />

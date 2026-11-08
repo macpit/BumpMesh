@@ -59,3 +59,29 @@ test('ring over the bowl: the stamp frame uses it, every side faces it', () => {
   // The underside faces down and still gets it.
   assert.ok(stampUV({ x: 10, y: 0, z: 0 }, { x: 0, y: 0, z: -1 }, f).cover > 0);
 });
+
+test('placement curve: through the lines, 1:1 beyond; gamma without lines; inverse', async () => {
+  const { bowlWarp, bowlUnwarp } = await import('../js/bowlProfile.js');
+  const lines = { pts: [[20, 10], [50, 60]], gamma: 1, R: 70 };
+  assert.equal(bowlWarp(lines, 10), 5);
+  assert.equal(bowlWarp(lines, 20), 10);
+  assert.equal(bowlWarp(lines, 35), 35);
+  assert.equal(bowlWarp(lines, 60), 70);
+  const g = { pts: [], gamma: 2, R: 70 };
+  assert.ok(bowlWarp(g, 35) < 35, 'gamma > 1 spreads the centre over more of the bottom');
+  assert.ok(Math.abs(bowlWarp(g, 70) - 70) < 1e-9, 'the outer edge stays');
+  for (const q of [5, 30, 65]) assert.ok(Math.abs(bowlWarp(lines, bowlUnwarp(lines, q, 70)) - q) < 1e-6);
+});
+
+test('lines move the image on the model', () => {
+  const pos = cup();
+  const table = buildBowlTable(pos, 0, 0);
+  const bounds = { min: { x: -30, y: -30, z: 0 }, max: { x: 30, y: 30, z: 40 }, size: { x: 60, y: 60, z: 40 }, center: { x: 0, y: 0, z: 20 } };
+  const base = { mappingMode: 0, stampOnce: true, stampRing: true, stampRingPlace: 'bowl', stampBowl: table,
+    stampCenterX: 0, stampCenterY: 0, stampCenterZ: 0, stampSide: 1, scaleU: 140, scaleV: 140, rotation: 0,
+    textureAspectU: 1, textureAspectV: 1 };
+  // Image radius 0.5 (35 mm) put at the bottom edge (arc 30 of 70).
+  const f = stampFrame({ ...base, stampBowlLines: [{ r: 0.5, s: 30 / table.sTop }] }, bounds);
+  const atEdge = stampUV({ x: 29.9, y: 0, z: 0 }, { x: 0, y: 0, z: -1 }, f);
+  assert.ok(Math.abs(atEdge.u - 0.75) < 0.01, `image radius 0.5 at the bottom edge (u ${atEdge.u})`);
+});

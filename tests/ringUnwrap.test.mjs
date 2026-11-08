@@ -72,3 +72,20 @@ test('flip turns the strip 180°: inner edge on top, angle reversed', () => {
     assert.equal(b.data[(y * b.width + x) * 4], a.data[((a.height - 1 - y) * a.width + (a.width - 1 - x)) * 4]);
   }
 });
+
+test('detectRingLines finds the closed circles of a drawing', async () => {
+  const { detectRingLines } = await import('../js/ringUnwrap.js');
+  const d = new Uint8ClampedArray(N * N * 4);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const r = Math.hypot(x + 0.5 - 100, y + 0.5 - 100);
+    const a = Math.atan2(y + 0.5 - 100, x + 0.5 - 100);
+    // circles at 40 and 80 px, a broken (dashed) circle at 60 px, spokes in between
+    let v = (Math.abs(r - 40) < 2 || Math.abs(r - 80) < 2) ? 255 : 0;
+    if (Math.abs(r - 60) < 2 && Math.sin(a * 12) > 0) v = 255;
+    if (r > 42 && r < 78 && Math.abs(Math.sin(a * 8)) < 0.05) v = 255;
+    d.set([v, v, v, 255], (y * N + x) * 4);
+  }
+  const lines = detectRingLines(d, N, N);
+  assert.equal(lines.length, 2, JSON.stringify(lines));
+  assert.ok(Math.abs(lines[0] - 0.4) < 0.02 && Math.abs(lines[1] - 0.8) < 0.02);
+});

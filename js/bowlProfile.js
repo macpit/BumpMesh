@@ -87,7 +87,7 @@ export function buildBowlTable(pos, cx, cy, { nr = 128, nz = 128, bins = 96 } = 
       data[j * nr + i] = s;
     }
   }
-  return { data, nr, nz, rMax, zMin, zMax, sTop: cum[cum.length - 1], profile };
+  return { data, nr, nz, rMax, zMin, zMax, sTop: cum[cum.length - 1], profile, cum };
 }
 
 /** Arc length (mm from the bottom centre along the surface) at radius r, height z — bilinear. */
@@ -100,4 +100,51 @@ export function bowlArc(table, r, z) {
   const a = data[z0 * nr + x0], b = data[z0 * nr + x0 + 1];
   const c = data[(z0 + 1) * nr + x0], d = data[(z0 + 1) * nr + x0 + 1];
   return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+}
+
+/** The outer profile point (radius, height) at arc length s — where a line at s runs around the model. */
+export function bowlPointAt(table, s) {
+  const { profile, cum } = table;
+  if (s <= 0) return profile[0];
+  for (let k = 1; k < profile.length; k++) {
+    if (s <= cum[k]) {
+      const t = (s - cum[k - 1]) / Math.max(cum[k] - cum[k - 1], 1e-9);
+      return [profile[k - 1][0] + t * (profile[k][0] - profile[k - 1][0]),
+              profile[k - 1][1] + t * (profile[k][1] - profile[k - 1][1])];
+    }
+  }
+  return profile[profile.length - 1];
+}
+
+/**
+ * Ring over the bowl ▸ placement curve: arc length on the model (mm) → arc
+ * length in the image's own scale (mm at the chosen diameter). With lines
+ * (pts: [s, q] pairs, s ascending) it runs piecewise-linear through them and
+ * through (0, 0), and 1 : 1 beyond the last; without, a power curve
+ * q = R·(s/R)^gamma spreads the middle (gamma > 1: the image's centre takes
+ * more of the bottom) or squeezes it (gamma < 1).
+ */
+export function bowlWarp(warp, s) {
+  if (!warp || s <= 0) return Math.max(0, s);
+  const { pts, gamma, R } = warp;
+  if (pts && pts.length) {
+    let ps = 0, pq = 0;
+    for (const [ks, kq] of pts) {
+      if (s <= ks) return pq + (s - ps) / Math.max(ks - ps, 1e-9) * (kq - pq);
+      ps = ks; pq = kq;
+    }
+    return pq + (s - ps);
+  }
+  if (!gamma || gamma === 1) return s;
+  return R * Math.pow(s / R, gamma);
+}
+
+/** Inverse of bowlWarp (monotonic): the model arc length where image arc length q lands. */
+export function bowlUnwarp(warp, q, sMax) {
+  let lo = 0, hi = Math.max(sMax, q) * 4 + 1;
+  for (let i = 0; i < 48; i++) {
+    const mid = (lo + hi) / 2;
+    if (bowlWarp(warp, mid) < q) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
 }

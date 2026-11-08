@@ -4,8 +4,11 @@
  */
 
 import * as THREE from 'three';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { initViewer, loadGeometry, setMeshMaterial, setMeshGeometry, setWireframe,
-         getControls, getCamera, getCurrentMesh,
+         getControls, getCamera, getCurrentMesh, getScene,
          setExclusionOverlay, setHoverPreview, setViewerTheme,
          setProjection, requestRender,
          clearDiagOverlays, setDiagEdges, addDiagFaces,
@@ -28,8 +31,8 @@ import { runExportPipeline }  from './exportPipeline.js';
 import { runPreviewPipeline, computeFaceNormals } from './previewPipeline.js';
 import { exportSTL, export3MF } from './exporter.js';
 import { growLines } from './lineGrow.js';
-import { detectRing, unwrapRing } from './ringUnwrap.js';
-import { buildBowlTable } from './bowlProfile.js';
+import { detectRing, unwrapRing, detectRingLines } from './ringUnwrap.js';
+import { buildBowlTable, bowlArc, bowlPointAt, bowlWarp, bowlUnwarp } from './bowlProfile.js';
 import { bandThresholds, heightRangeMm, heightHistogram, bandShares, bandOf } from './colorBands.js';
 
 // Default contour heights (% of the texture height) for 2, 3 and 4 filament colors.
@@ -71,6 +74,12 @@ let currentBounds     = null;   // bounds of the original geometry
 let currentPoseRot    = new THREE.Quaternion();
 let currentPoseTrans  = new THREE.Vector3();
 let _activeStep       = null;   // tool rail step (js/toolRail.js)
+// Ornaments ▸ ring over the bowl: height lines (see _syncBowlLines)
+const BOWL_LINE_COLORS = [0xffd166, 0x06d6a0, 0x4cc9f0, 0xf72585, 0xb5e48c, 0xff9f1c, 0xc77dff, 0xffffff];
+const _bowlLinesDetectCache = new WeakMap();
+let _bowlLineGroup = null;
+let _bowlLinesShown = true;
+let _bowlDrag = null;        // { k, off } while a line is dragged
 let _keepCameraNext   = false;  // scale/undo: the next material reload keeps the view
 let modelScale        = { x: 1, y: 1, z: 1 };   // Model ▸ Scale, relative to the size the model was loaded with
 // Every move of the loaded geometry (rotate, place on face, scale, re-centre)
@@ -234,6 +243,8 @@ const settings = {
   stampRing: false,       // Ornaments ▸ Ring: a round frame (ringUnwrap.js), placed by stampRingPlace
   stampRingPlace: 'top',  // 'top' | 'bottom' (planar, centred on the axis) | 'wall' (rolled out as a border)
   stampRingFlip: false,   // Ring around the wall: band turned 180° (inner edge on top)
+  stampBowlLines: [],     // Ring over the bowl ▸ height lines: { r: image radius (share of half), s: share of the profile or null }
+  stampBowlGamma: 1,      // Ring over the bowl ▸ distribution without placed lines (>1: bigger centre)
   stampCenterX: null,
   stampCenterY: null,
   stampCenterZ: null,
@@ -275,7 +286,7 @@ const LAYER_KEYS = [
   'boundaryFalloff', 'boundaryFalloffCurve',
   'snapSeamlessWrap', 'cylinderCenterX', 'cylinderCenterY', 'cylinderRadius',
   'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
-  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance', 'stampRing', 'stampRingPlace', 'stampRingFlip',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance', 'stampRing', 'stampRingPlace', 'stampRingFlip', 'stampBowlLines', 'stampBowlGamma',
 ];
 let layers = [];        // layer records, composition order (first = bottom); see _newLayer
 let activeLayer = 0;    // index into `layers` of the layer the sidebar edits
@@ -2060,7 +2071,7 @@ function wireEvents() {
       if (step === 'mask' && exclusionTool && !_filamentPaint) setExclusionTool(null);
       if (step === 'colors' && _filamentPaint) _setFilamentPaint(0, null);
     },
-    onShow: (step) => { _activeStep = step; _syncScaleGizmo(); updateCylinderUIVisibility(); },
+    onShow: (step) => { _activeStep = step; _syncScaleGizmo(); updateCylinderUIVisibility(); _syncBowlLines(); },
   });
 
   // ── Menu bar: File ▸ Load model / Recent ──
@@ -2259,6 +2270,22 @@ function wireEvents() {
     // Rotation gizmo takes priority
     if (isGizmoDragging()) return;
 
+    // Ring over the bowl: a press on one of its height lines drags that line.
+    if (_bowlLinesVisible() && !exclusionTool) {
+      const k = _bowlLineAt(e);
+      if (k >= 0) {
+        e.preventDefault();
+        _flushUndoCapture();
+        const idx = _bowlLinesNow()[k];
+        _freezeBowlLines();
+        _bowlDrag = { k: settings.stampBowlLines.findIndex(l => Math.abs(l.r - idx.r) < 1e-9), off: false };
+        if (_bowlDrag.k < 0) _bowlDrag.k = k;
+        getControls().enabled = false;
+        _syncBowlLines();
+        return;
+      }
+    }
+
     // Stamp placement: a hit centres the stamp and starts the drag; a miss
     // falls through to OrbitControls.
     if (stampPlaceActive) {
@@ -2326,6 +2353,8 @@ function wireEvents() {
   let _hoverRafId = 0;
 
   canvas.addEventListener('mousemove', (e) => {
+    if (_bowlDrag) { _bowlLineDragMove(e); return; }
+    if (_bowlLinesVisible()) canvas.style.cursor = _bowlLineAt(e) >= 0 ? 'ns-resize' : '';
     // Paint-Events sofort verarbeiten (jeder Event zaehlt fuer lueckenloses Malen)
     if (isPainting && exclusionTool === 'brush') {
       paintAt(e);
@@ -2373,6 +2402,8 @@ function wireEvents() {
   });
 
   document.addEventListener('mouseup', _endStampDrag);
+  document.addEventListener('mouseup', _endBowlLineDrag);
+  canvas.addEventListener('dblclick', (e) => { if (_bowlLinesVisible() && !exclusionTool) _addBowlLineAt(e); });
 
   // While armed, the wheel resizes the stamp. Captured on the canvas's parent
   // so the viewer's cursor zoom (a wheel listener on the canvas) never sees it.
@@ -3158,7 +3189,8 @@ function _previewLayers() {
       blendAdd: index > 0 && L.blendAdd,
       stampOnce: s.stampOnce, stampSide: s.stampSide, stampWrap: s.stampWrap, stampRepeats: s.stampRepeats, stampBandWidth: s.stampBandWidth,
       stampFilament: s.stampFilament, stampRepeatsV: s.stampRepeatsV, stampColorSpread: s.stampColorSpread, stampClearance: s.stampClearance,
-      stampRing: s.stampRing, stampRingPlace: s.stampRingPlace, ..._ringRadiiFor(index, entry), ..._bowlFor(index),
+      stampRing: s.stampRing, stampRingPlace: s.stampRingPlace, stampBowlLines: s.stampBowlLines, stampBowlGamma: s.stampBowlGamma,
+      ..._ringRadiiFor(index, entry), ..._bowlFor(index),
       stampBowlTexture: _bowlTableFor(index)?.texture ?? null,
       stampCenterX: s.stampCenterX, stampCenterY: s.stampCenterY, stampCenterZ: s.stampCenterZ,
       stampNormalX: s.stampNormalX, stampNormalY: s.stampNormalY, stampNormalZ: s.stampNormalZ,
@@ -3548,8 +3580,9 @@ function updateStampUIVisibility() {
     opt.disabled = settings.stampOnce ? !STAMP_MODES.has(v) : v === 7;   // Surface normal: stamps only
     if (v === 7) opt.hidden = !settings.stampOnce;
   }
-  stampPlaceRow.style.display = on ? '' : 'none';
-  stampHint.style.display = on ? '' : 'none';
+  const bowlRing = !!settings.stampRing && settings.stampRingPlace === 'bowl';
+  stampPlaceRow.style.display = on && !bowlRing ? '' : 'none';
+  stampHint.style.display = on && !bowlRing ? '' : 'none';
   offsetUSlider.closest('.form-row').style.display = on ? 'none' : '';
   offsetVSlider.closest('.form-row').style.display = on ? 'none' : '';
   seamBandWidthSlider.closest('.form-row').style.display = on ? 'none' : '';   // no projection seams on a stamp
@@ -3734,7 +3767,7 @@ function _addOrnament(kind) {
   Object.assign(fresh.settings, {
     stampOnce: false, stampWrap: false, stampCenterX: null, stampCenterY: null, stampCenterZ: null,
     stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampFilament: 0, stampRelief: 'raised',
-    invertDisplacement: false, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0, stampRing: false, stampRingPlace: 'top', stampRingFlip: false,
+    invertDisplacement: false, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0, stampRing: false, stampRingPlace: 'top', stampRingFlip: false, stampBowlLines: [], stampBowlGamma: 1,
     stampBandWidth: null, rotation: 0,
   });
   fresh.settings.amplitude = fresh.settings.textureHeight;
@@ -3790,6 +3823,176 @@ function _ringFitWidth() {
   if (!strip || !strip.ring) return _borderWidthMm();
   const r = settings.cylinderRadius ?? Math.max(currentBounds.size.x, currentBounds.size.y) * 0.5;
   return Math.max(1, +(2 * Math.PI * r * strip.height / strip.width).toFixed(1));
+}
+
+// ── Ornaments ▸ Ring over the bowl: height lines ─────────────────────────────
+// The circles found in the image (ringUnwrap.js detectRingLines) show as
+// lines around the model where they land. Dragging one along the surface
+// pins that image circle there (stampBowlLines s); between pinned lines the
+// image stretches linearly (bowlProfile.js bowlWarp). Double-click adds a
+// line, dragging one off the model removes it.
+
+function _isBowlRing(s = settings) {
+  return !!s.stampOnce && !!s.stampRing && s.stampRingPlace === 'bowl';
+}
+
+/** The lines shown: the layer's own, else the circles found in its image (not yet pinned). */
+function _bowlLinesNow() {
+  if (settings.stampBowlLines && settings.stampBowlLines.length) return settings.stampBowlLines;
+  const entry = getEffectiveMapEntry();
+  if (!entry?.imageData) return [];
+  let found = _bowlLinesDetectCache.get(entry.imageData);
+  if (!found) {
+    found = detectRingLines(entry.imageData.data, entry.width, entry.height);
+    _bowlLinesDetectCache.set(entry.imageData, found);
+  }
+  return found.map(r => ({ r, s: null }));
+}
+
+/** Model arc length (mm) of each shown line, with the current curve. */
+function _bowlLineArcs(frame, lines) {
+  const sTop = frame.bowl.sTop;
+  return lines.map(l => l.s != null ? l.s * sTop : bowlUnwarp(frame.warp, l.r * frame.warp.R, sTop));
+}
+
+/** Pin every shown line where it is now, so one can move without shifting the others. */
+function _freezeBowlLines() {
+  const frame = _stampFrameFor(activeLayer);
+  if (!frame?.bowl) return;
+  const lines = _bowlLinesNow();
+  const arcs = _bowlLineArcs(frame, lines);
+  settings.stampBowlLines = lines.map((l, k) => ({ r: l.r, s: arcs[k] / frame.bowl.sTop }));
+}
+
+
+function _bowlLinesVisible() {
+  return _bowlLinesShown && _activeStep === 'ornaments' && _isBowlRing() && !!currentGeometry && !!layers[activeLayer]?.visible;
+}
+
+/** Redraw the lines around the model (or hide them). */
+function _syncBowlLines() {
+  const scene = getScene();
+  if (!scene) return;
+  if (_bowlLineGroup) {
+    scene.remove(_bowlLineGroup);
+    _bowlLineGroup.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); });
+    _bowlLineGroup = null;
+  }
+  const mesh = getCurrentMesh();
+  const frame = _bowlLinesVisible() ? _stampFrameFor(activeLayer) : null;
+  if (!mesh || !frame?.bowl) { requestRender(); return; }
+  const lines = _bowlLinesNow();
+  const arcs = _bowlLineArcs(frame, lines);
+  const g = new THREE.Group();
+  g.matrixAutoUpdate = false;
+  mesh.updateMatrixWorld();
+  g.matrix.copy(mesh.matrixWorld);
+  const lift = Math.max(currentBounds.size.x, currentBounds.size.z) * 0.004;
+  lines.forEach((l, k) => {
+    const [r, z] = bowlPointAt(frame.bowl, arcs[k]);
+    const pts = [];
+    const n = 160;
+    for (let i = 0; i <= n; i++) {
+      const a = i / n * Math.PI * 2;
+      pts.push(new THREE.Vector3(frame.cx + (r + lift) * Math.cos(a), frame.cy + (r + lift) * Math.sin(a), z));
+    }
+    const dragged = _bowlDrag && _bowlDrag.k === k;
+    const mat = new LineMaterial({
+      color: dragged && _bowlDrag.off ? 0xff3b30 : BOWL_LINE_COLORS[k % BOWL_LINE_COLORS.length],
+      linewidth: dragged ? 4 : 2.5, depthTest: false, transparent: true, opacity: dragged ? 1 : 0.9,
+    });
+    mat.resolution.set(canvas.clientWidth, canvas.clientHeight);
+    const lg = new LineGeometry();
+    lg.setPositions(pts.flatMap(p => [p.x, p.y, p.z]));
+    const line = new Line2(lg, mat);
+    line.renderOrder = 999;
+    line.userData = { k, pts };
+    g.add(line);
+  });
+  _bowlLineGroup = g;
+  scene.add(g);
+  requestRender();
+}
+
+/** The line (index) under the cursor, within a few pixels on screen. */
+function _bowlLineAt(e) {
+  if (!_bowlLineGroup) return -1;
+  const rect = canvas.getBoundingClientRect();
+  const cam = getCamera();
+  const v = new THREE.Vector3();
+  let best = -1, bestD = 12;
+  for (const line of _bowlLineGroup.children) {
+    const pts = line.userData.pts;
+    for (let i = 0; i < pts.length; i += 2) {
+      v.copy(pts[i]).applyMatrix4(_bowlLineGroup.matrix).project(cam);
+      if (v.z > 1) continue;
+      const x = (v.x + 1) / 2 * rect.width + rect.left, y = (1 - v.y) / 2 * rect.height + rect.top;
+      const d = Math.hypot(x - e.clientX, y - e.clientY);
+      if (d < bestD) { bestD = d; best = line.userData.k; }
+    }
+  }
+  return best;
+}
+
+/** Model arc length under the cursor, or null off the model. */
+function _bowlArcAt(e, frame) {
+  const hit = _stampRaycast(e);
+  if (!hit) return null;
+  return bowlArc(frame.bowl, Math.hypot(hit.p.x - frame.cx, hit.p.y - frame.cy), hit.p.z);
+}
+
+function _bowlLineDragMove(e) {
+  const frame = _stampFrameFor(activeLayer);
+  if (!_bowlDrag || !frame?.bowl) return;
+  const s = _bowlArcAt(e, frame);
+  _bowlDrag.off = s == null;
+  if (s != null) {
+    const lines = settings.stampBowlLines;
+    const k = _bowlDrag.k;
+    // Stay between the neighbours (by image radius), half a millimetre apart.
+    const sTop = frame.bowl.sTop, gap = 0.5 / sTop;
+    let lo = 0, hi = Infinity;
+    for (let j = 0; j < lines.length; j++) {
+      if (j === k || lines[j].s == null) continue;
+      if (lines[j].r < lines[k].r) lo = Math.max(lo, lines[j].s + gap);
+      if (lines[j].r > lines[k].r) hi = Math.min(hi, lines[j].s - gap);
+    }
+    lines[k].s = Math.max(lo, Math.min(hi, s / sTop));
+  }
+  _syncBowlLines();
+  _syncPreviewMaterial();
+  requestRender();
+}
+
+function _endBowlLineDrag() {
+  if (!_bowlDrag) return;
+  if (_bowlDrag.off) settings.stampBowlLines.splice(_bowlDrag.k, 1);   // dragged off the model: gone
+  _bowlDrag = null;
+  getControls().enabled = true;
+  _syncBowlLines();
+  _syncOrnamentUI();
+  updatePreview();
+  _autoSaveSettings();
+  _commitUndoCapture();
+}
+
+/** Double-click on the model: a new line there, at the image radius that lands there now. */
+function _addBowlLineAt(e) {
+  const frame = _stampFrameFor(activeLayer);
+  if (!frame?.bowl) return false;
+  const s = _bowlArcAt(e, frame);
+  if (s == null) return false;
+  _freezeBowlLines();
+  if (settings.stampBowlLines.length >= 8) return true;
+  _flushUndoCapture();
+  const r = bowlWarp(frame.warp, s) / frame.warp.R;
+  settings.stampBowlLines.push({ r, s: s / frame.bowl.sTop });
+  settings.stampBowlLines.sort((a, b) => a.r - b.r);
+  _syncBowlLines();
+  updatePreview();
+  _autoSaveSettings();
+  _commitUndoCapture();
+  return true;
 }
 
 /**
@@ -3912,6 +4115,14 @@ function _syncOrnamentUI() {
     const flat = settings.stampRingPlace !== 'wall';
     document.getElementById('orn-ring-dia-row').style.display = flat ? '' : 'none';   // .form-row is display:flex, hidden alone won't do
     document.getElementById('orn-ring-flip-row').style.display = flat ? 'none' : '';
+    const bowlOn = settings.stampRingPlace === 'bowl';
+    document.getElementById('orn-bowl-box').hidden = !bowlOn;
+    if (bowlOn) {
+      const d = +(Math.log(settings.stampBowlGamma || 1) / Math.log(3)).toFixed(2);
+      const br = document.getElementById('orn-bowl-dist'), bv = document.getElementById('orn-bowl-dist-val');
+      if (document.activeElement !== bv) { br.value = String(d); bv.value = String(d); }
+      document.getElementById('orn-bowl-show').checked = _bowlLinesShown;
+    }
     document.getElementById('orn-ring-flip').checked = !!settings.stampRingFlip;
     const dr = document.getElementById('orn-ring-dia'), dv = document.getElementById('orn-ring-dia-val');
     if (currentBounds) dr.max = String(Math.ceil(Math.max(currentBounds.size.x, currentBounds.size.y, currentBounds.size.z) * 3));
@@ -4063,6 +4274,23 @@ function _wireOrnaments() {
     if (!(d > 0)) return;
     _setStampSizeMm(d);
   });
+  pair('orn-bowl-dist', 'orn-bowl-dist-val', (d) => {
+    if (!Number.isFinite(d)) return;
+    settings.stampBowlGamma = Math.pow(3, Math.max(-1, Math.min(1, d)));
+    // The lines follow the distribution again.
+    settings.stampBowlLines = (settings.stampBowlLines || []).map(l => ({ r: l.r, s: null }));
+  });
+  document.getElementById('orn-bowl-show').addEventListener('change', (e) => {
+    _bowlLinesShown = e.target.checked;
+    _syncBowlLines();
+  });
+  document.getElementById('orn-bowl-reset').addEventListener('click', () => {
+    _flushUndoCapture();
+    settings.stampBowlLines = [];
+    settings.stampBowlGamma = 1;
+    apply();
+    _commitUndoCapture();
+  });
   pair('orn-clear', 'orn-clear-val', (mm) => {
     if (!(mm >= 0)) return;
     settings.stampClearance = mm;
@@ -4198,7 +4426,7 @@ function _stampDepthFor(i, frame) {
 /** The raycast hit when the cursor is over the active stamp's patch, else null. */
 function _stampPatchHit(e) {
   const frame = _activeStampFrame();
-  if (!frame) return null;
+  if (!frame || frame.bowl) return null;   // a ring over the bowl sits on the axis; its lines move it
   const hit = _stampRaycast(e);
   if (!hit || stampUV(hit.p, hit.n, frame).cover <= 0) return null;
   return { ...hit, frame };
@@ -6656,6 +6884,7 @@ function updatePreview() {
   }
 
   syncBoundaryEdgeUniforms();
+  if (!_bowlDrag) _syncBowlLines();
   exportBtn.disabled = false;
   export3mfBtn.disabled = false;
   bakeBtn.disabled = isBaking;
@@ -7806,7 +8035,7 @@ const PERSISTED_KEYS = [
   'cylinderPanelMinimized',
   // Stamp placement; the centre, side and normal are nullable like the cylinder axis.
   'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
-  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance', 'stampRing', 'stampRingPlace', 'stampRingFlip',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance', 'stampRing', 'stampRingPlace', 'stampRingFlip', 'stampBowlLines', 'stampBowlGamma',
 ];
 
 // Settings that are NOT per layer (see LAYER_KEYS): resolution, triangle
@@ -8125,6 +8354,9 @@ function applySettingsSnapshot(snap) {
   settings.stampRing = !!snap.stampRing;
   settings.stampRingPlace = ['top', 'bottom', 'wall', 'bowl'].includes(snap.stampRingPlace) ? snap.stampRingPlace : 'top';
   settings.stampRingFlip = !!snap.stampRingFlip;
+  settings.stampBowlLines = Array.isArray(snap.stampBowlLines)
+    ? snap.stampBowlLines.filter(l => l && l.r >= 0).slice(0, 8).map(l => ({ r: +l.r, s: l.s == null ? null : +l.s })) : [];
+  settings.stampBowlGamma = Number(snap.stampBowlGamma) > 0 ? Number(snap.stampBowlGamma) : 1;
   settings.stampCenterX = snap.stampCenterX ?? null;
   settings.stampCenterY = snap.stampCenterY ?? null;
   settings.stampCenterZ = snap.stampCenterZ ?? null;
@@ -8225,7 +8457,7 @@ const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   cylinderCenterX: null, cylinderCenterY: null, cylinderRadius: null,
   cylinderPanelMinimized: false,
   stampOnce: false, stampCenterX: null, stampCenterY: null, stampCenterZ: null, stampSide: null,
-  stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampWrap: false, stampRepeats: 12, stampBandWidth: null, stampRelief: 'raised', stampFilament: 0, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0, stampRing: false, stampRingPlace: 'top', stampRingFlip: false,
+  stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampWrap: false, stampRepeats: 12, stampBandWidth: null, stampRelief: 'raised', stampFilament: 0, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0, stampRing: false, stampRingPlace: 'top', stampRingFlip: false, stampBowlLines: [], stampBowlGamma: 1,
   activeMapName: DEFAULT_PRESET_NAME,
 });
 

@@ -70,6 +70,8 @@ const sharedGLSL = /* glsl */`
   uniform int       layerStampWrap[MAX_LAYERS]; // border: rows stacked in the band (≥ 1), 0 = plain stamp
   uniform vec4      layerStampBowl[MAX_LAYERS];  // ring over the bowl: rMax, zMin, zMax, on (arc-length table in stampDepthN)
   uniform vec2      layerStampBowlN[MAX_LAYERS]; // its table size (nr, nz)
+  uniform vec4      layerBowlWarp[MAX_LAYERS];   // placement curve: line count, gamma, R (mm) — bowlProfile.js bowlWarp
+  uniform vec2      layerBowlPts[MAX_LAYERS * 8]; // its lines: (model arc, image arc) in mm, ascending
   uniform vec2      layerStampRing[MAX_LAYERS];  // flat ring: inner, outer radius of the drawing / half the image (covers the annulus only); x −1 = not a ring
   uniform float     layerStampClear[MAX_LAYERS]; // stamp clearance frame around the image (mm, mapping.js stampFrame clear)
   uniform float     layerOrnThr[MAX_LAYERS];    // ornament color spread: cut level of the pattern value (mapping.js ornamentThreshold)
@@ -201,12 +203,31 @@ const sharedGLSL = /* glsl */`
     return mix(mix(a, bb, t.x), mix(c, d, t.x), t.y);
   }
 
+  // Mirrors bowlWarp in bowlProfile.js.
+  float bowlWarpGL(int l, float s) {
+    vec4 w = layerBowlWarp[l];
+    int n = int(w.x + 0.5);
+    if (s <= 0.0) return 0.0;
+    if (n > 0) {
+      vec2 p = vec2(0.0);
+      for (int k = 0; k < 8; k++) {
+        if (k >= n) break;
+        vec2 q = layerBowlPts[l * 8 + k];
+        if (s <= q.x) return p.y + (s - p.x) / max(q.x - p.x, 1e-6) * (q.y - p.y);
+        p = q;
+      }
+      return p.y + (s - p.x);
+    }
+    if (abs(w.y - 1.0) < 1e-4) return s;
+    return w.z * pow(s / w.z, w.y);
+  }
+
   vec3 stampFrame(int l, vec3 pos, vec3 n) {
     vec4 st = layerStamp[l];
     if (layerStampBowl[l].w > 0.5) {
       vec2 rc = pos.xy - st.xy;
       float r = length(rc);
-      float s = bowlArc(l, r, pos.z);
+      float s = bowlWarpGL(l, bowlArc(l, r, pos.z));
       vec2 d0 = r > 1e-6 ? rc * (s / r) : vec2(0.0);
       float c0 = cos(layerRot[l]); float s0 = sin(layerRot[l]);
       d0 = vec2(c0 * d0.x - s0 * d0.y, s0 * d0.x + c0 * d0.y);
@@ -919,6 +940,15 @@ export function updateMaterial(material, layers, settings) {
     u.layerStampBowl.value[l * 4 + 3] = bowl ? 1 : 0;
     u.layerStampBowlN.value[l * 2]     = bowl ? bowl.nr : 2;
     u.layerStampBowlN.value[l * 2 + 1] = bowl ? bowl.nz : 2;
+    const warp = bowl && st.warp ? st.warp : null;
+    const npts = warp ? Math.min(8, warp.pts.length) : 0;
+    u.layerBowlWarp.value[l * 4]     = npts;
+    u.layerBowlWarp.value[l * 4 + 1] = warp ? warp.gamma : 1;
+    u.layerBowlWarp.value[l * 4 + 2] = warp ? warp.R : 1;
+    for (let k = 0; k < 8; k++) {
+      u.layerBowlPts.value[(l * 8 + k) * 2]     = k < npts ? warp.pts[k][0] : 0;
+      u.layerBowlPts.value[(l * 8 + k) * 2 + 1] = k < npts ? warp.pts[k][1] : 0;
+    }
     if (depthU.value !== depthTex) depthU.value = depthTex;
     u.layerStampDepth.value[l * 4]     = sd ? 1 : 0;
     u.layerStampDepth.value[l * 4 + 1] = sd ? sd.depth.texel : 0;
@@ -990,6 +1020,8 @@ function buildUniforms() {
     layerStampRing: { value: new Float32Array(MAX_LAYERS * 2).fill(-1) },
     layerStampBowl: { value: new Float32Array(MAX_LAYERS * 4) },
     layerStampBowlN: { value: new Float32Array(MAX_LAYERS * 2).fill(2) },
+    layerBowlWarp: { value: new Float32Array(MAX_LAYERS * 4) },
+    layerBowlPts: { value: new Float32Array(MAX_LAYERS * 8 * 2) },
     layerStampDepth: { value: new Float32Array(MAX_LAYERS * 4) },
     layerStampNormal: { value: new Float32Array(MAX_LAYERS * 3) },
     layerStampAxisU:  { value: new Float32Array(MAX_LAYERS * 3) },

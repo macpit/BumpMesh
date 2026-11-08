@@ -77,3 +77,40 @@ export function unwrapRing(data, w, h, ring, { maxWidth = 4096, flip = false } =
   }
   return { data: out, width, height };
 }
+
+/**
+ * Closed circles of the drawing (for the height lines of a ring over the
+ * bowl): radii where at least `cover` of the circle is drawn (grey ≥ half),
+ * each run of such radii counted once at its middle. Returned as shares of
+ * half the image (0–1), ascending, at most `max` (the widest kept first).
+ */
+export function detectRingLines(data, w, h, { cover = 0.8, max = 8 } = {}) {
+  const cx = w / 2, cy = h / 2;
+  const R = Math.floor(Math.min(w, h) / 2);
+  const runs = [];
+  let start = -1;
+  for (let r = 1; r <= R; r++) {
+    const n = Math.max(64, Math.ceil(2 * Math.PI * r));
+    let on = 0;
+    for (let k = 0; k < n; k++) {
+      const a = 2 * Math.PI * k / n;
+      if (grey(data, w, h, cx + r * Math.cos(a), cy + r * Math.sin(a)) >= 0.5) on++;
+    }
+    const isLine = on / n >= cover;
+    if (isLine && start < 0) start = r;
+    if ((!isLine || r === R) && start >= 0) {
+      const end = isLine ? r : r - 1;
+      runs.push({ mid: (start + end) / 2, width: end - start + 1 });
+      start = -1;
+    }
+  }
+  // Merge runs closer than 2 % of the radius (one drawn line, antialiased).
+  const merged = [];
+  for (const run of runs) {
+    const last = merged[merged.length - 1];
+    if (last && run.mid - last.mid < R * 0.02) { last.mid = (last.mid + run.mid) / 2; last.width += run.width; }
+    else merged.push({ ...run });
+  }
+  return merged.sort((a, b) => b.width - a.width).slice(0, max)
+    .map(run => run.mid / R).sort((a, b) => a - b);
+}

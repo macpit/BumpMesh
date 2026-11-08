@@ -12,7 +12,7 @@
 import { QuantizedPointMap } from './meshIndex.js';
 import { outlineWrapCapWeight, outlineWrapPlace } from './outlineWrap.js';
 import { unfoldPlace } from './unfold.js';
-import { bowlArc } from './bowlProfile.js';
+import { bowlArc, bowlWarp } from './bowlProfile.js';
 
 export const MODE_PLANAR_XY   = 0;
 export const MODE_PLANAR_XZ   = 1;
@@ -562,7 +562,7 @@ export function stampFrame(settings, bounds) {
   const repeats = Math.max(1, Math.round(Number(settings.stampRepeats) || 8));
   const repeatsV = wrap ? Math.max(1, Math.round(Number(settings.stampRepeatsV) || 1)) : 1;
   const rotRad = wrap ? 0 : (settings.rotation ?? 0) * Math.PI / 180;
-  return {
+  const frame = {
     mode, cx, cy, cz, side, ccx, ccy, r, wrap, repeats, repeatsV,
     nx, ny, nz, ...stampAxes(nx, ny, nz),
     sizeU: wrap ? 2 * Math.PI * r / repeats
@@ -588,6 +588,29 @@ export function stampFrame(settings, bounds) {
     fade: Math.max(Number(settings.boundaryFalloff) || 0, 0),
     fadeCurve: settings.boundaryFalloffCurve ?? 'linear',
   };
+  if (frame.bowl) frame.warp = bowlWarpFrom(settings, frame.bowl, frame.sizeU / 2);
+  return frame;
+}
+
+/**
+ * Ring over the bowl ▸ the placement curve of a layer (bowlProfile.js
+ * bowlWarp): its height lines (stampBowlLines: image radius r as a share of
+ * half the image, model position s as a share of the profile length; only
+ * placed lines count) or, without any, the distribution stampBowlGamma.
+ */
+export function bowlWarpFrom(settings, bowl, R) {
+  const lines = Array.isArray(settings.stampBowlLines) ? settings.stampBowlLines : [];
+  const pts = [];
+  for (const l of lines) {
+    if (l == null || l.s == null || !(l.r >= 0)) continue;
+    pts.push([l.s * bowl.sTop, l.r * R]);
+  }
+  pts.sort((a, b) => a[0] - b[0]);
+  // Keep it monotonic: a line dragged past its neighbour can't fold the image.
+  const mono = [];
+  for (const p of pts) if (!mono.length || (p[0] > mono[mono.length - 1][0] + 1e-6 && p[1] > mono[mono.length - 1][1] + 1e-6)) mono.push(p);
+  const g = Number(settings.stampBowlGamma);
+  return { pts: mono, gamma: Number.isFinite(g) && g > 0 ? g : 1, R: Math.max(R, 1e-6) };
 }
 
 /** The Smooth Mask ramp shapes — must match applyFalloffCurve in main.js and the shader. */
@@ -660,7 +683,7 @@ function _stampAB(x, y, z, frame, out) {
   if (frame.bowl) {
     const dx = x - frame.cx, dy = y - frame.cy;
     const r = Math.hypot(dx, dy);
-    const s = bowlArc(frame.bowl, r, z);
+    const s = bowlWarp(frame.warp, bowlArc(frame.bowl, r, z));
     a = r > 1e-9 ? s * dx / r : 0;
     b = r > 1e-9 ? s * dy / r : 0;
     out.a = a; out.b = b;
