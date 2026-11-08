@@ -63,7 +63,7 @@ A new step in the tool rail for motifs that are placed, not tiled. Every ornamen
 - Test patterns drawn for this fork: `ornaments/maeander-test.svg` (border) and `ornaments/ring-test.svg` (ring).
 
 ### User interface
-- **Menu bar** — the BumpMesh logo opens *Info* (about, what's new, license, imprint, support links for the original author, source code, language and theme); *File* has load model (⌘/Ctrl+O), open/save project (⌘/Ctrl+S), reset to defaults and **recently used** files (kept in the browser, no upload).
+- **Menu bar** — the BumpMesh logo opens *Info* (about, what's new, license, imprint, source code of this fork and of the original, language and theme); *File* has load model (⌘/Ctrl+O), open/save project (⌘/Ctrl+S), reset to defaults and **recently used** files (kept in the browser, no upload).
 - **Tool rail** on the left: Model, Texture, Mapping, Height, Mask, Colors, Undo/Redo, Export. The settings panel shows only the chosen step instead of one long list.
 - **Advanced / Beta dissolved** — every option moved to the step where it acts; long explanations moved into ⓘ tooltips.
 - **Export 3MF first** — 3MF is the main export button (it carries the colors), STL stays available next to it; both sit at the bottom of the Export step.

@@ -149,7 +149,6 @@ export default {
   "menu.recentMissing": "{name} is no longer stored in this browser.",
   "menu.about": "About BumpMesh",
   "menu.whatsNew": "What’s New",
-  "menu.support": "Support the original author",
   "menu.source": "Source code",
   "menu.sourceFork": "This fork (macpit)",
   "menu.sourceUpstream": "Original (CNC Kitchen)",
