@@ -1272,15 +1272,29 @@ function populateLanguageSelector() {
     gallery.refreshText();
     _renderLayerStrip();
     _renderFilamentColors();
+    _spreadRowHelp();
   });
 
   languageSelector.appendChild(select);
 }
 populateLanguageSelector();
 
+/**
+ * Hover help on the whole row: a slider row's explanation sits on its label;
+ * copy it onto the row so pointing at the slider or the number shows it too.
+ * Runs after every translation pass.
+ */
+function _spreadRowHelp() {
+  for (const row of document.querySelectorAll('#settings-panel .form-row')) {
+    const src = row.querySelector(':scope > label[title], :scope > .form-row-label[title]');
+    if (src && src.title) row.title = src.title;
+  }
+}
+
 // Initialise language (reads localStorage / browser preference, applies translations)
 {
   const { enFailed } = await initLang();
+  _spreadRowHelp();
   if (enFailed) {
     // English base strings failed — the UI will show raw keys. Surface a plain
     // English message since t() won't work reliably at this point.

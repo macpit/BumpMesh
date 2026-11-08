@@ -2136,21 +2136,23 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
   margin-bottom: 10px;
 }
 .excl-mode-row .excl-seg {
-  width: 100%;
+  flex: 1;
 }
+.excl-mode-row .excl-seg-btn { white-space: normal; line-height: 1.2; padding: 5px 6px; }
 
 .excl-tool-btn {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 5px 8px;
+  gap: 7px;
+  padding: 10px 8px;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
   white-space: nowrap;
@@ -2160,6 +2162,8 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
   border-color: var(--accent-hover);
   color: var(--text);
 }
+
+.excl-tool-btn svg { width: 16px; height: 16px; }
 
 .excl-tool-btn.active {
   background: color-mix(in srgb, var(--accent) 18%, var(--surface2));
