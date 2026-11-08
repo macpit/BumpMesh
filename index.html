@@ -529,6 +529,11 @@
             <input type="range" id="orn-depth" min="0" max="2" step="0.01" value="0.5" />
             <input type="number" class="val" id="orn-depth-val" min="0" max="20" step="0.01" value="0.5" />
           </div>
+          <div class="form-row slider-row">
+            <label for="orn-grow" data-i18n="orn.grow" data-i18n-title="orn.growTitle" title="Makes the lines of the pattern this much wider (mm, in total), for relief and color. For thin single-line SVGs: about one nozzle width makes them printable.">Thicker lines (mm)</label>
+            <input type="range" id="orn-grow" min="0" max="3" step="0.05" value="0" />
+            <input type="number" class="val" id="orn-grow-val" min="0" max="20" step="0.05" value="0" />
+          </div>
           <div class="form-row">
             <label for="orn-filament" data-i18n="orn.filament" data-i18n-title="orn.filamentTitle" title="Print the ornament in its own filament (3MF). The border of the pattern is cut exactly, like color by height.">Filament</label>
             <select id="orn-filament">

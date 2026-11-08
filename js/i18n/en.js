@@ -30,6 +30,8 @@ export default {
   "orn.spreadTitle": "How far the ornament color spreads into the pattern: low = only the strongest lines, high = up to the faintest. 50 % cuts at mid grey.",
   "orn.repeatsV": "Rows",
   "orn.repeatsVTitle": "How many rows of the pattern are stacked in the band, one above the other.",
+  "orn.grow": "Thicker lines (mm)",
+  "orn.growTitle": "Makes the lines of the pattern this much wider (mm, in total), for relief and color. For thin single-line SVGs: about one nozzle width makes them printable.",
   "orn.filamentNone": "Same as the model",
   "steps.ornaments": "Ornaments",
   "steps.ornamentsTitle": "Ornaments: stamps and borders",

@@ -27,6 +27,7 @@ import { subdivide }          from './subdivision.js';
 import { runExportPipeline }  from './exportPipeline.js';
 import { runPreviewPipeline, computeFaceNormals } from './previewPipeline.js';
 import { exportSTL, export3MF } from './exporter.js';
+import { growLines } from './lineGrow.js';
 import { bandThresholds, heightRangeMm, heightHistogram, bandShares, bandOf } from './colorBands.js';
 
 // Default contour heights (% of the texture height) for 2, 3 and 4 filament colors.
@@ -225,6 +226,7 @@ const settings = {
   stampFilament: 0,
   stampRepeatsV: 1,       // Border: rows of the pattern stacked in the band
   stampColorSpread: 50,   // Ornament filament: % of the pattern that takes it (cut at 1 − spread)
+  stampLineGrow: 0,       // Ornaments ▸ Thicker lines: mm added to the pattern's line width
   stampCenterX: null,
   stampCenterY: null,
   stampCenterZ: null,
@@ -266,7 +268,7 @@ const LAYER_KEYS = [
   'boundaryFalloff', 'boundaryFalloffCurve',
   'snapSeamlessWrap', 'cylinderCenterX', 'cylinderCenterY', 'cylinderRadius',
   'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
-  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow',
 ];
 let layers = [];        // layer records, composition order (first = bottom); see _newLayer
 let activeLayer = 0;    // index into `layers` of the layer the sidebar edits
@@ -3131,8 +3133,8 @@ function _previewLayers() {
   for (const { index, isActive } of slots) {
     const L = layers[index];
     const s = isActive ? settings : L.settings;
-    const entry = isActive ? getEffectiveMapEntry()
-                           : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture);
+    const entry = _grownMapFor(index, isActive ? getEffectiveMapEntry()
+                           : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture));
     const tw = entry?.width ?? 1, th = entry?.height ?? 1;
     const tmax = Math.max(tw, th, 1);
     if (isActive) activeIdx = list.length;
@@ -3197,8 +3199,8 @@ function _pipelineInputs() {
     if (!L.visible) continue;
     const isActive = i === activeLayer;
     const s = isActive ? settings : L.settings;
-    const entry = isActive ? getEffectiveMapEntry()
-                           : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture);
+    const entry = _grownMapFor(i, isActive ? getEffectiveMapEntry()
+                           : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture));
     if (!entry || !entry.imageData) continue;
     parts.push({ L, i, isActive, s, entry });
   }
@@ -3635,6 +3637,8 @@ function _syncOrnamentUI() {
     if (document.activeElement !== dv) { dr.value = String(settings.textureHeight); dv.value = String(+(+settings.textureHeight).toFixed(2)); }
     document.getElementById('orn-filament').value = String(settings.stampFilament || 0);
     _syncOrnamentColor();
+    const gr = document.getElementById('orn-grow'), gv = document.getElementById('orn-grow-val');
+    if (document.activeElement !== gv) { gr.value = String(settings.stampLineGrow || 0); gv.value = String(settings.stampLineGrow || 0); }
   }
   const border = !!settings.stampOnce && !!settings.stampWrap;
   const stamp = !!settings.stampOnce && !settings.stampWrap;
@@ -3762,6 +3766,10 @@ function _wireOrnaments() {
   pair('orn-spread', 'orn-spread-val', (p) => {
     if (!Number.isFinite(p)) return;
     settings.stampColorSpread = Math.max(2, Math.min(98, p));
+  });
+  pair('orn-grow', 'orn-grow-val', (mm) => {
+    if (!(mm >= 0)) return;
+    settings.stampLineGrow = mm;
   });
   pair('orn-repeats-v', 'orn-repeats-v-val', (n) => {
     if (!(n >= 1)) return;
@@ -5744,6 +5752,42 @@ function syncBoundaryEdgeUniforms() {
   u.boundaryFalloffDist.value = settings.boundaryFalloff ?? 0;
 }
 
+// ── Ornaments ▸ Thicker lines ────────────────────────────────────────────────
+// stampLineGrow (mm) widens the pattern's bright parts (lineGrow.js) so thin
+// single-line SVGs print; the grown map feeds both the preview and the export.
+// One cached result per source map, rebuilt when the radius in pixels changes.
+const _grownMapCache = new WeakMap();   // source imageData → { key, entry }
+
+function _grownMapFor(i, entry) {
+  const L = layers[i];
+  if (!entry || !entry.imageData || !L) return entry;
+  const s = i === activeLayer ? settings : L.settings;
+  const mm = Number(s.stampLineGrow) || 0;
+  if (!(mm > 0) || !isStampActive(s)) return entry;
+  const frame = _stampFrameFor(i);
+  if (!frame) return entry;
+  const r = mm / 2, rows = frame.repeatsV || 1;
+  const q = (px, max) => Math.min(max, Math.round(px * 4) / 4);
+  const rx = q(r * entry.width / frame.sizeU, entry.width / 4);
+  const ry = q(r * entry.height * rows / frame.sizeV, entry.height / 4);
+  const key = `${rx}_${ry}_${frame.wrap}_${rows}`;
+  const hit = _grownMapCache.get(entry.imageData);
+  if (hit && hit.key === key) return hit.entry;
+  const data = growLines(entry.imageData.data, entry.width, entry.height, rx, ry,
+    { wrapX: frame.wrap, wrapY: frame.wrap && rows > 1 });
+  const imageData = new ImageData(data, entry.width, entry.height);
+  const canvas = document.createElement('canvas');
+  canvas.width = entry.width; canvas.height = entry.height;
+  canvas.getContext('2d').putImageData(imageData, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  const grown = { ...entry, imageData, texture };
+  _grownMapCache.set(entry.imageData, { key, entry: grown });
+  // The material switches to the new texture on this update; free the old one after.
+  if (hit) setTimeout(() => hit.entry.texture.dispose(), 2000);
+  return grown;
+}
+
 /** The active layer's map after texture smoothing / inversion (see _effectiveMapFor). */
 function getEffectiveMapEntry() {
   return _effectiveMapFor(activeMapEntry, settings.textureSmoothing, settings.invertTexture);
@@ -7371,7 +7415,7 @@ const PERSISTED_KEYS = [
   'cylinderPanelMinimized',
   // Stamp placement; the centre, side and normal are nullable like the cylinder axis.
   'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
-  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow',
 ];
 
 // Settings that are NOT per layer (see LAYER_KEYS): resolution, triangle
@@ -7683,6 +7727,7 @@ function applySettingsSnapshot(snap) {
   settings.stampFilament = Math.max(0, Math.min(4, Math.round(Number(snap.stampFilament) || 0)));
   settings.stampRepeatsV = Math.max(1, Math.round(Number(snap.stampRepeatsV) || 1));
   settings.stampColorSpread = Math.max(2, Math.min(98, Number(snap.stampColorSpread) || 50));
+  settings.stampLineGrow = Math.max(0, Number(snap.stampLineGrow) || 0);
   settings.stampCenterX = snap.stampCenterX ?? null;
   settings.stampCenterY = snap.stampCenterY ?? null;
   settings.stampCenterZ = snap.stampCenterZ ?? null;
@@ -7782,7 +7827,7 @@ const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   cylinderCenterX: null, cylinderCenterY: null, cylinderRadius: null,
   cylinderPanelMinimized: false,
   stampOnce: false, stampCenterX: null, stampCenterY: null, stampCenterZ: null, stampSide: null,
-  stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampWrap: false, stampRepeats: 12, stampBandWidth: null, stampRelief: 'raised', stampFilament: 0, stampRepeatsV: 1, stampColorSpread: 50,
+  stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampWrap: false, stampRepeats: 12, stampBandWidth: null, stampRelief: 'raised', stampFilament: 0, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0,
   activeMapName: DEFAULT_PRESET_NAME,
 });
 

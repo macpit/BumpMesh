@@ -30,6 +30,8 @@ export default {
   "orn.spreadTitle": "Wie weit sich die Ornamentfarbe ins Muster ausdehnt: tief = nur die kräftigsten Linien, hoch = bis in die schwächsten. 50 % schneidet bei mittlerem Grau.",
   "orn.repeatsV": "Reihen",
   "orn.repeatsVTitle": "Wie viele Reihen des Musters im Band übereinander liegen.",
+  "orn.grow": "Linien verstärken (mm)",
+  "orn.growTitle": "Macht die Linien des Musters um so viel breiter (mm, gesamt), für Relief und Farbe. Für dünne Single-Line-SVGs: etwa eine Düsenbreite macht sie druckbar.",
   "orn.filamentNone": "Wie das Modell",
   "steps.ornaments": "Ornamente",
   "steps.ornamentsTitle": "Ornamente: Stempel und Bordüren",
