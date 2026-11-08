@@ -7,26 +7,24 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>BumpMesh by CNC Kitchen</title>
-  <meta name="description" content="BumpMesh by CNC Kitchen is a browser-based tool for adding displacement textures to STL, OBJ, and 3MF models locally, then exporting printable textured meshes." />
+  <title>BumpMesh – Color &amp; GUI fork (by macpit)</title>
+  <meta name="description" content="A fork of BumpMesh by CNC Kitchen with multi-filament colors and a reworked interface. BumpMesh is a browser-based tool for adding displacement textures to STL, OBJ, and 3MF models locally, then exporting printable textured meshes." />
   <link rel="canonical" href="https://bumpmesh.com/" />
   <meta property="og:locale" content="en_US" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="BumpMesh" />
-  <meta property="og:title" content="BumpMesh by CNC Kitchen" />
+  <meta property="og:title" content="BumpMesh – Color &amp; GUI fork (original by CNC Kitchen)" />
   <meta property="og:description" content="Add displacement textures to STL, OBJ, and 3MF models directly in your browser. Preview, mask, bake, and export printable textured meshes locally." />
-  <meta property="og:url" content="https://bumpmesh.com/" />
-  <meta property="og:image" content="https://bumpmesh.com/assets/preview.jpg" />
-  <meta property="og:image:secure_url" content="https://bumpmesh.com/assets/preview.jpg" />
-  <meta property="og:image:type" content="image/jpeg" />
-  <meta property="og:image:width" content="2078" />
-  <meta property="og:image:height" content="1091" />
-  <meta property="og:image:alt" content="BumpMesh interface for previewing and exporting textured 3D models" />
+  <meta property="og:url" content="https://macpit.github.io/stlTexturizer/" />
+  <meta property="og:image" content="https://macpit.github.io/stlTexturizer/docs/screenshot-color-by-height.webp" />
+  <meta property="og:image:secure_url" content="https://macpit.github.io/stlTexturizer/docs/screenshot-color-by-height.webp" />
+  <meta property="og:image:type" content="image/webp" />
+  <meta property="og:image:alt" content="BumpMesh fork: a bowl colored by height with three filaments" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="BumpMesh by CNC Kitchen" />
+  <meta name="twitter:title" content="BumpMesh – Color &amp; GUI fork (original by CNC Kitchen)" />
   <meta name="twitter:description" content="Add displacement textures to STL, OBJ, and 3MF models directly in your browser. Preview, mask, bake, and export printable textured meshes locally." />
-  <meta name="twitter:image" content="https://bumpmesh.com/assets/preview.jpg" />
-  <meta name="twitter:image:alt" content="BumpMesh interface for previewing and exporting textured 3D models" />
+  <meta name="twitter:image" content="https://macpit.github.io/stlTexturizer/docs/screenshot-color-by-height.webp" />
+  <meta name="twitter:image:alt" content="BumpMesh fork: a bowl colored by height with three filaments" />
   <link rel="icon" type="image/png" href="logo.png" />
   <link rel="stylesheet" href="style.css" />
   <script>
@@ -918,6 +916,7 @@
       <p class="imprint-text" data-i18n-html="about.fork">A fork by <a href="https://github.com/macpit/stlTexturizer" target="_blank" rel="noopener noreferrer">macpit</a> that adds multi-filament color painting in the 3MF export (textured faces, color by height) and the Unfold projection.</p>
       <h3 class="imprint-section-heading" data-i18n="about.licenseHeading">License</h3>
       <p class="imprint-text" data-i18n-html="about.license">Free software under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU Affero General Public License v3.0</a> (AGPL-3.0-only). You may use, change and share it; changed versions you offer to others, including over a network, must make their source code available under the same license. It comes with <strong>no warranty</strong>.</p>
+      <p class="imprint-text" data-i18n-html="fork.aboutStar">Like the fork? A <a href="https://github.com/macpit/stlTexturizer" target="_blank" rel="noopener noreferrer">⭐ on GitHub</a> is all I ask. To support the original author, see Info ▸ Support the original author.</p>
       <p class="imprint-text about-links">
         <a href="https://github.com/macpit/stlTexturizer" target="_blank" rel="noopener noreferrer" data-i18n="menu.sourceFork">This fork (macpit)</a> &middot;
         <a href="https://github.com/CNCKitchen/stlTexturizer" target="_blank" rel="noopener noreferrer" data-i18n="menu.sourceUpstream">Original (CNC Kitchen)</a>
@@ -949,17 +948,19 @@
   <!-- Sponsor popup -->
   <div id="sponsor-overlay" class="sponsor-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="sponsor-title">
     <div class="sponsor-modal">
-      <h2 id="sponsor-title" data-i18n="sponsor.title">Thanks for using BumpMesh by CNC Kitchen!</h2>
-      <p data-i18n-html="sponsor.body">This tool is provided <strong>completely free</strong> by CNC Kitchen.<br>
-      While your STL is being processed, why not check out the <a href="https://geni.us/CNCStoreTexture" target="_blank" rel="noopener noreferrer" class="modal-text-link">store</a> that helps us keep making cool stuff for you?</p>
+      <h2 id="sponsor-title" data-i18n="fork.sponsorTitle">Thanks for trying this BumpMesh fork!</h2>
+      <p data-i18n-html="fork.sponsorBody">BumpMesh was created by <strong>Stefan Hermann (CNC Kitchen)</strong> and is free to use. This fork adds filament colors and a reworked interface.<br>If you want to give something back, support the original author. For the fork, a ⭐ on GitHub is all I ask.</p>
       <a href="https://geni.us/CNCStoreTexture" target="_blank" rel="noopener noreferrer" class="sponsor-link" data-i18n="sponsor.visitStore">
         🛒 Visit CNCKitchen.STORE
       </a>
-      <a href="https://www.paypal.me/CNCKitchen" target="_blank" rel="noopener noreferrer" class="sponsor-link sponsor-link--paypal" data-i18n="sponsor.donate">
-        💙 Send a tip on PayPal
+      <a href="https://www.paypal.me/CNCKitchen" target="_blank" rel="noopener noreferrer" class="sponsor-link sponsor-link--paypal" data-i18n="fork.tipPaypal">
+        💙 Tip Stefan on PayPal
       </a>
-      <a href="https://ko-fi.com/cnckitchen" target="_blank" rel="noopener noreferrer" class="sponsor-link sponsor-link--kofi" data-i18n="sponsor.donateKofi">
-        ☕ Send a tip on Ko-fi
+      <a href="https://ko-fi.com/cnckitchen" target="_blank" rel="noopener noreferrer" class="sponsor-link sponsor-link--kofi" data-i18n="fork.tipKofi">
+        ☕ Tip Stefan on Ko-fi
+      </a>
+      <a href="https://github.com/macpit/stlTexturizer" target="_blank" rel="noopener noreferrer" class="sponsor-link sponsor-link--star" data-i18n="fork.starFork">
+        ⭐ Star this fork on GitHub
       </a>
       <label class="sponsor-no-show">
         <input type="checkbox" id="sponsor-dont-show" />

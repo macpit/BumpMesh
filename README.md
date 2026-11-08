@@ -3,6 +3,8 @@
 > **This is a fork of [BumpMesh by CNC Kitchen](https://github.com/CNCKitchen/stlTexturizer)** (original author: Stefan Hermann, live at [bumpmesh.com](https://bumpmesh.com)).
 >
 > **Try this fork:** **https://macpit.github.io/stlTexturizer/** (updated automatically on every push)
+>
+> If you like the fork, a ⭐ on GitHub is all I ask. To support the original author, use the [CNCKitchen.STORE](https://geni.us/CNCStoreTexture), [PayPal](https://www.paypal.me/CNCKitchen) or [Ko-fi](https://ko-fi.com/cnckitchen).
 
 ![BumpMesh fork: tool rail on the left, bowl colored by height with three filaments, view gizmo top right, Export step on the right](docs/screenshot-color-by-height.webp)
 

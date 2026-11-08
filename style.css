@@ -2402,6 +2402,13 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
 }
 .sponsor-link--kofi:hover { background: #e04e4b; }
 
+.sponsor-link--star {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.sponsor-link--star:hover { background: var(--surface2); border-color: var(--accent); color: var(--accent); }
+
 .sponsor-no-show {
   display: flex;
   align-items: center;
