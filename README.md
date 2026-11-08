@@ -73,7 +73,7 @@ A new step in the tool rail for motifs that are placed, not tiled. Every ornamen
 - **In-app dialogs** — "Reset to defaults" and deleting your own textures ask in a dialog inside the app instead of a browser pop-up, so they also work in embedded browsers that drop those pop-ups.
 - **Undo/redo for model edits** — scale, rotate and place on face can be undone like any setting.
 - **Start model** — a 120 mm bowl (models/bowl.obj) instead of the 50 mm cube: curved walls, an inside and a flat bottom show more of what textures, masks and colors do.
-- **Cleaner screen** — no popup on export, no support banner or footer links in the sidebar, no welcome popup on start (still under Info ▸ What's New), 3D Preview moved to the viewport footer, larger footer text. The "Define cylinder projection" window shows only in the Mapping and Ornaments steps, where it is used.
+- **Cleaner screen** — no popup on export, no support banner or footer links in the sidebar, no welcome popup (Info ▸ What's New opens this README's change list in a new tab, so it is kept in one place); *License & Terms* is written for the fork (AGPL v3, original author, where questions about the fork go) instead of the original site's terms, 3D Preview moved to the viewport footer, larger footer text. The "Define cylinder projection" window shows only in the Mapping and Ornaments steps, where it is used.
 
 ### Hosting
 - **GitHub Pages** — every push publishes the app to https://macpit.github.io/BumpMesh/. The imprint names this fork's operator, not CNC Kitchen.

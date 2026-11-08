@@ -669,11 +669,6 @@ const imprintLink    = document.getElementById('imprint-link');
 const imprintOverlay = document.getElementById('imprint-overlay');
 const imprintClose   = document.getElementById('imprint-close');
 
-// ── Welcome / What's New popup (only from Info ▸ What's New, never on startup) ─
-const welcomeLink     = document.getElementById('welcome-link');
-const welcomeOverlay  = document.getElementById('welcome-overlay');
-const welcomeClose    = document.getElementById('welcome-close');
-const welcomeGotIt    = document.getElementById('welcome-got-it');
 
 // ── Language selector DOM refs ────────────────────────────────────────────────────
 const languageSelector = document.querySelector('.lang-seg');
@@ -1599,17 +1594,6 @@ if (customMapRemoveBtn) {
   });
 }
 
-// ── Welcome popup: open / dismiss ─────────────────────────────────────────────
-function openWelcome() {
-  welcomeOverlay.classList.remove('hidden');
-  trapFocus(welcomeOverlay);
-
-  const close = () => welcomeOverlay.classList.add('hidden');
-  welcomeClose.onclick   = close;
-  welcomeGotIt.onclick   = close;
-  welcomeOverlay.onclick = (e) => { if (e.target === welcomeOverlay) close(); };
-}
-
 // ── Accessibility: Modal focus trap ───────────────────────────────────────────
 function trapFocus(overlay) {
   const focusable = overlay.querySelectorAll(
@@ -2050,7 +2034,6 @@ function wireEvents() {
   });
 
   // ── Welcome / What's New ──
-  welcomeLink.addEventListener('click', () => openWelcome());
 
   // ── Mesh diagnostics dismiss ──
   meshDiagDismiss.addEventListener('click', () => {

@@ -43,6 +43,15 @@ export function initMenuBar(root, { onOpen } = {}) {
     }, true);
   }
 
+  // Links to other sites always open in a new tab, also in embedded browsers
+  // that would otherwise load target="_blank" in the app's own tab.
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest?.('a[target="_blank"][href^="http"]');
+    if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    window.open(a.href, '_blank', 'noopener');
+  });
+
   document.addEventListener('pointerdown', (e) => {
     if (openMenu && !openMenu.contains(e.target)) close();
   }, true);
