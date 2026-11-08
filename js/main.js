@@ -2040,30 +2040,9 @@ function wireEvents() {
   });
 
   // ── Export ──
-  const startExport = (format) => {
-    // Start the export immediately — the pipeline runs in the worker, so the
-    // sponsor overlay sits on top of a live progress bar instead of delaying
-    // the work until it's dismissed.
-    handleExport(format);
-
-    if (sessionStorage.getItem('stlt-no-sponsor') === '1') return;
-    const overlay = document.getElementById('sponsor-overlay');
-    const closeBtn = document.getElementById('sponsor-close');
-    // Button plus the inline text link (the button may be hidden or removed by adblockers)
-    const storeLinks = overlay.querySelectorAll('a[href="https://geni.us/CNCStoreTexture"]');
-    overlay.classList.remove('hidden');
-    trapFocus(overlay);
-
-    const dismiss = () => {
-      if (document.getElementById('sponsor-dont-show').checked) {
-        sessionStorage.setItem('stlt-no-sponsor', '1');
-      }
-      overlay.classList.add('hidden');
-    };
-
-    closeBtn.onclick = dismiss;
-    storeLinks.forEach(a => { a.onclick = () => setTimeout(dismiss, 150); });
-  };
+  // No sponsor popup on export in this fork: the support links for the
+  // original author live under Info ▸ Support the original author.
+  const startExport = (format) => handleExport(format);
   exportBtn.addEventListener('click', () => startExport('stl'));
   export3mfBtn.addEventListener('click', () => startExport('3mf'));
 
@@ -7571,7 +7550,10 @@ function resetSettingsToDefaults() {
     layers = [_newLayer({ includeOnly: false, maskModeChosen: false })];
     activeLayer = 0;
     _syncTreeLayers();
-    if (paintTree) paintTree.clearLayer(_activeSlot());
+    if (paintTree) {
+      paintTree.clearLayer(_activeSlot());
+      for (const id of FILAMENT_PAINT_IDS) { const sl = paintTree.layerSlot(id); if (sl >= 0) paintTree.clearLayer(sl); }
+    }
     if (selectionMode) setSelectionMode(false, { clear: false });
     maskModeChosen         = false;
     updateMaskModeButtons();
@@ -7593,10 +7575,49 @@ function resetSettingsToDefaults() {
   }
 }
 
+/**
+ * In-app yes/no dialog. window.confirm is unreliable (embedded browsers drop
+ * it and answer "cancel"), so questions that guard an action use this.
+ * Resolves true for OK, false for Cancel, Escape or a click beside it.
+ */
+function _confirmDialog(message, okLabel = t('dialog.ok')) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'license-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    const box = document.createElement('div');
+    box.className = 'license-modal confirm-modal';
+    const p = document.createElement('p');
+    p.className = 'confirm-text';
+    p.textContent = message;
+    const row = document.createElement('div');
+    row.className = 'confirm-buttons';
+    const cancel = document.createElement('button');
+    cancel.type = 'button'; cancel.className = 'scale-reset-btn confirm-cancel'; cancel.textContent = t('dialog.cancel');
+    const ok = document.createElement('button');
+    ok.type = 'button'; ok.className = 'export-go-btn confirm-ok'; ok.textContent = okLabel;
+    row.append(cancel, ok);
+    box.append(p, row);
+    overlay.append(box);
+    document.body.append(overlay);
+    const done = (v) => { overlay.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); done(false); }
+      else if (e.key === 'Enter') { e.preventDefault(); done(true); }
+    };
+    cancel.onclick = () => done(false);
+    ok.onclick = () => done(true);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) done(false); });
+    document.addEventListener('keydown', onKey, true);
+    ok.focus();
+  });
+}
+
 const resetSettingsBtn = document.getElementById('reset-settings-btn');
 if (resetSettingsBtn) {
-  resetSettingsBtn.addEventListener('click', () => {
-    if (confirm(t('alerts.resetConfirm'))) resetSettingsToDefaults();
+  resetSettingsBtn.addEventListener('click', async () => {
+    if (await _confirmDialog(t('alerts.resetConfirm'), t('dialog.reset'))) resetSettingsToDefaults();
   });
 }
 
