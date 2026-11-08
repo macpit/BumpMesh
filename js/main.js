@@ -11,7 +11,7 @@ import { initViewer, loadGeometry, setMeshMaterial, setMeshGeometry, setWirefram
          clearDiagOverlays, setDiagEdges, addDiagFaces,
          setRotationGizmo, isGizmoDragging, isSoftwareRendering, setTurntable,
          setSectionView, setSectionAxis, flipSection, setSectionHandlesLocked,
-         sectionVisibleHits } from './viewer.js';
+         sectionVisibleHits, setResultPreview } from './viewer.js';
 import { loadModelFile, computeBounds, getTriangleCount }  from './stlLoader.js';
 import { estimateStep } from './stepLoader.js';
 import { resolveStepSettings } from './stepConvert.js';
@@ -27,10 +27,15 @@ import { subdivide }          from './subdivision.js';
 import { runExportPipeline }  from './exportPipeline.js';
 import { runPreviewPipeline, computeFaceNormals } from './previewPipeline.js';
 import { exportSTL, export3MF } from './exporter.js';
-import { bandThresholds, heightRangeMm } from './colorBands.js';
+import { bandThresholds, heightRangeMm, heightHistogram, bandShares, bandOf } from './colorBands.js';
 
 // Default contour heights (% of the texture height) for 2, 3 and 4 filament colors.
 const DEFAULT_COLOR_THRESHOLDS = Object.freeze({ 2: [50], 3: [40, 70], 4: [30, 55, 80] });
+// Filament color state. Declared up here: wireEvents() renders the filament
+// rows during module init, long before the functions further down run.
+let _colorResult = null;     // export result preview: { key, positions, labels, shares, swatches }
+let _colorResultBusy = false;
+const _heightHistCache = new WeakMap(); // imageData → Map(direction|slopes → height histogram)
 import { buildAdjacency, bucketFill,
          buildExclusionOverlayGeo, buildFaceWeights } from './exclusion.js';
 import { buildSoftExclusion, softPaintedFaces } from './softMask.js';
@@ -95,6 +100,7 @@ let brushHardness      = 0.5;         // circle brush: 1 = hard, leaf-exact; < 1
 let brushPrecision     = true;        // circle brush: true = Precision (refines under the stroke), false = Standard (whole triangles)
 let bucketThreshold    = 20;
 let isPainting         = false;
+let paintRevision      = 0;           // bumped on every mask change (export result preview staleness)
 let selectionMode      = false;       // false = exclude painted faces; true = include only painted faces
 let maskModeChosen     = false;       // false until the user (or a loaded/seeded mask) engages surface masking — neither mode button is highlighted
 let _lastHoverTriIdx   = -1;          // last triangle index used for hover preview
@@ -1800,6 +1806,12 @@ function wireEvents() {
   colorModeSel.addEventListener('change', () => {
     settings.colorMode = colorModeSel.value;
     _renderFilamentColors();
+    // Height colors only match the export on the real relief: the flanks of
+    // the texture carry the middle bands, and bump shading has no flanks.
+    if (settings.colorMode === 'height' && !dispPreviewToggle.checked && !dispPreviewToggle.disabled) {
+      dispPreviewToggle.checked = true;
+      dispPreviewToggle.dispatchEvent(new Event('change', { bubbles: true }));
+    }
   });
   colorBandsSel.addEventListener('change', () => {
     const n = +colorBandsSel.value;
@@ -3943,6 +3955,7 @@ function refreshExclusionOverlay() {
   if (!currentGeometry || !paintTree) return;
 
   _falloffDirty = true;
+  paintRevision++;
 
   // Never show the flat-coloured MeshLambertMaterial overlay — the custom
   // shader handles mask visualisation with smooth, view-dependent shading.
@@ -4172,6 +4185,7 @@ function loadDefaultCube() {
   // Invalidate any in-flight async operations tied to the previous model
   cancelDisplacementPreviewBuild();
   exportToken++;
+  _clearColorResult();
 
   currentGeometry = geo;
   currentBounds   = computeBounds(geo);
@@ -4341,6 +4355,7 @@ async function handleModelFile(file, stepSettings = null) {
     // Invalidate any in-flight async operations tied to the previous model
     cancelDisplacementPreviewBuild();
     exportToken++;
+    _clearColorResult();
     diagToken++;
 
     currentGeometry = geometry;
@@ -5341,7 +5356,9 @@ function _renderFilamentColors() {
     label.textContent = mode === 'textured'
       ? t(i === 0 ? 'ui.filamentUntextured' : 'ui.filamentTextured', { n: i + 1 })
       : t('ui.filamentN', { n: i + 1 });
-    row.append(swatch, label);
+    const share = document.createElement('span');
+    share.className = 'filament-share';
+    row.append(swatch, label, share);
     if (mode === 'height' && i > 0) {
       // Filament i starts at threshold i-1; keep thresholds strictly ordered.
       const lo = () => (i > 1 ? settings.colorThresholds[i - 2] + 1 : 1);
@@ -5368,7 +5385,226 @@ function _renderFilamentColors() {
     }
     colorFilamentsBox.append(row);
   }
+  if (mode !== 'off') {
+    const btn = document.createElement('button');
+    btn.id = 'color-result-btn';
+    btn.className = 'export-btn color-result-btn';
+    btn.disabled = !currentGeometry || !_hasTexturedLayer();
+    btn.textContent = t(_colorResult ? 'ui.colorResultHide' : 'ui.colorResultShow');
+    btn.title = t('tooltips.colorResult');
+    btn.addEventListener('click', () => (_colorResult ? _clearColorResult() : _showColorResult()));
+    colorFilamentsBox.append(btn);
+  }
+  if (mode === 'height') {
+    const hist = document.createElement('canvas');
+    hist.id = 'color-histogram';
+    hist.className = 'color-histogram';
+    hist.title = t('tooltips.colorHistogram');
+    const note = document.createElement('div');
+    note.id = 'color-share-note';
+    note.className = 'color-share-note';
+    colorFilamentsBox.append(hist, note);
+  }
   _syncPreviewMaterial();
+  _updateColorStats();
+}
+
+// Surface area of the model that gets textured vs. stays smooth (angle masks,
+// painted masks), for the filament share estimate. Cached: it walks the mesh.
+let _surfaceSplitCache = { key: null, value: { textured: 1, untextured: 0 } };
+function _surfaceSplit() {
+  if (!currentGeometry) return { textured: 1, untextured: 0 };
+  const key = [currentGeometry.uuid, paintRevision, settings.bottomAngleLimit, settings.topAngleLimit,
+    layers.map(L => L.visible).join()].join('|');
+  if (_surfaceSplitCache.key === key) return _surfaceSplitCache.value;
+  const { positions: p, faceWeights: fw } = _pipelineInputs();
+  let textured = 0, untextured = 0;
+  for (let t = 0; t < p.length / 9; t++) {
+    const b = t * 9;
+    const ux = p[b+3]-p[b], uy = p[b+4]-p[b+1], uz = p[b+5]-p[b+2];
+    const vx = p[b+6]-p[b], vy = p[b+7]-p[b+1], vz = p[b+8]-p[b+2];
+    const a = Math.hypot(uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx) / 2;
+    if (fw && (fw[t*3] + fw[t*3+1] + fw[t*3+2]) / 3 > 0.99) untextured += a; else textured += a;
+  }
+  _surfaceSplitCache = { key, value: { textured, untextured } };
+  return _surfaceSplitCache.value;
+}
+
+// Height histograms per height map (and push direction): a map is a few MB,
+// recomputing on every slider tick would stutter.
+function _heightHistFor(imageData) {
+  // Slopes: mm of relief per grey step between neighbouring texels, from the
+  // texture height and its size on the model (scaleU/V are mm).
+  const amp = Math.abs(settings.amplitude) || 0;
+  const slopeU = settings.scaleU > 0 ? amp * imageData.width / settings.scaleU : 0;
+  const slopeV = settings.scaleV > 0 ? amp * imageData.height / settings.scaleV : 0;
+  const pushIn = settings.amplitude < 0;
+  let e = _heightHistCache.get(imageData);
+  if (!e) { e = new Map(); _heightHistCache.set(imageData, e); }
+  const k = `${pushIn}|${slopeU.toFixed(3)}|${slopeV.toFixed(3)}`;
+  if (!e.has(k)) { if (e.size > 8) e.clear(); e.set(k, heightHistogram(imageData, pushIn, { slopeU, slopeV })); }
+  return e.get(k);
+}
+
+// ── Export result preview ─────────────────────────────────────────────────────
+// The real export pipeline (contour cut, decimation, repair) run on demand and
+// shown in place of the model with the filament colors: exactly what the
+// slicer receives. Cleared as soon as any setting no longer matches.
+
+// Everything that changes the export geometry or its labels. The preview
+// colors are left out: they only recolor the result.
+function _colorResultKey() {
+  const { filamentColors, ...rest } = settings;
+  return JSON.stringify([rest, layers.map(L => [L.settings, L.visible, L.blendAdd]), currentGeometry && currentGeometry.uuid,
+    paintRevision]);
+}
+
+function _colorResultShares() {
+  return _colorResult && _colorResult.key === _colorResultKey() ? _colorResult.shares : null;
+}
+
+function _clearColorResult() {
+  if (!_colorResult) return;
+  _colorResult = null;
+  setResultPreview(null);
+  const btn = document.getElementById('color-result-btn');
+  if (btn) btn.textContent = t('ui.colorResultShow');
+  _updateColorStats();
+}
+
+function _resultGeometry(positions, labels, swatches) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  g.computeVertexNormals();
+  const cols = swatches.map(c => new THREE.Color(c));
+  const colors = new Float32Array(positions.length);
+  for (let t = 0; t < labels.length; t++) {
+    const c = cols[labels[t]] || cols[0];
+    for (let k = 0; k < 3; k++) colors.set([c.r, c.g, c.b], t * 9 + k * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  return g;
+}
+
+async function _showColorResult() {
+  if (!currentGeometry || !_hasTexturedLayer() || isExporting || isBaking || _colorResultBusy) return;
+  const btn = document.getElementById('color-result-btn');
+  const myToken = ++exportToken;
+  const key = _colorResultKey();
+  _colorResultBusy = true;
+  isExporting = true;
+  if (btn) { btn.disabled = true; btn.textContent = t('ui.colorResultBusy'); }
+  exportProgress.classList.remove('hidden');
+  try {
+    await _owTablesForExport();
+    if (exportToken !== myToken) return;
+    const inputs = _pipelineInputs();
+    const result = await runPipeline({
+      positions: inputs.positions, faceWeights: inputs.faceWeights, softExclude: inputs.softExclude,
+      imageData: inputs.imageData, imgWidth: inputs.imgWidth, imgHeight: inputs.imgHeight,
+      layers: inputs.layers,
+      settings: _owSettings(settings),
+      bounds: currentBounds, regularizeOpts: _regularizeOpts(), mode: 'export',
+    }, _onExportPipelineEvent, () => exportToken !== myToken);
+    if (!result || exportToken !== myToken || !result.faceLabels) return;
+    // Surface share per filament, area-weighted over the whole export.
+    const p = result.positions, L = result.faceLabels;
+    const area = new Array(settings.filamentColors.length).fill(0);
+    let total = 0;
+    for (let t = 0; t < L.length; t++) {
+      const b = t * 9;
+      const ux = p[b+3]-p[b], uy = p[b+4]-p[b+1], uz = p[b+5]-p[b+2];
+      const vx = p[b+6]-p[b], vy = p[b+7]-p[b+1], vz = p[b+8]-p[b+2];
+      const a = Math.hypot(uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx);
+      area[L[t]] += a; total += a;
+    }
+    const nBands = settings.colorMode === 'height' ? settings.colorBands : 2;
+    _colorResult = {
+      key, positions: p, labels: L, swatches: settings.filamentColors,
+      shares: area.slice(0, nBands).map(a => (total > 0 ? a / total : 0)),
+    };
+    setResultPreview(_resultGeometry(p, L, settings.filamentColors));
+    setProgress(1.0, t('progress.done'));
+  } catch (err) {
+    console.error('Export result preview failed:', err);
+    alert(t('alerts.exportFailed', { msg: err.message }));
+  } finally {
+    _colorResultBusy = false;
+    isExporting = false;
+    setTimeout(() => { exportProgress.classList.add('hidden'); setProgress(0, ''); }, 800);
+    if (btn && btn.isConnected) {
+      btn.disabled = false;
+      btn.textContent = t(_colorResult ? 'ui.colorResultHide' : 'ui.colorResultShow');
+    }
+    _updateColorStats();
+  }
+}
+
+/**
+ * Surface share per filament next to each filament row, plus the height
+ * histogram with the thresholds. Exact shares come from a computed export
+ * result (Show export result) while it matches the current settings;
+ * otherwise they are estimated from the active height map.
+ */
+function _updateColorStats() {
+  // The rows can be built before a model or map is loaded (session restore).
+  const resultBtn = document.getElementById('color-result-btn');
+  if (resultBtn && !_colorResultBusy) resultBtn.disabled = !currentGeometry || !_hasTexturedLayer();
+  if (_colorResult) {
+    // A result that no longer matches the settings goes; a new preview
+    // color only recolors it.
+    if (_colorResult.key !== _colorResultKey()) { _clearColorResult(); return; }
+    if (_colorResult.swatches !== settings.filamentColors) {
+      _colorResult.swatches = settings.filamentColors;
+      setResultPreview(_resultGeometry(_colorResult.positions, _colorResult.labels, settings.filamentColors));
+    }
+  }
+  if (settings.colorMode !== 'height') return;
+  const canvas = document.getElementById('color-histogram');
+  const note = document.getElementById('color-share-note');
+  if (!canvas || !note) return;
+  const T = bandThresholds(settings.colorBands, settings.colorThresholds);
+  const entry = getEffectiveMapEntry();
+  const hist = entry && entry.imageData ? _heightHistFor(entry.imageData) : null;
+  const exact = _colorResultShares();
+  let shares = exact;
+  if (!shares && hist) {
+    // Textured surface (grown by the relief) split by the histogram, plus
+    // the untextured surface, which always stays on filament 1.
+    const split = _surfaceSplit();
+    const tex = split.textured * (hist.areaFactor || 1);
+    const total = tex + split.untextured;
+    shares = bandShares(hist, T).map((v, i) => (v * tex + (i === 0 ? split.untextured : 0)) / (total || 1));
+  }
+  colorFilamentsBox.querySelectorAll('.filament-share').forEach((el, i) => {
+    el.textContent = shares && shares[i] != null ? `${Math.round(shares[i] * 100)} %` : '';
+  });
+  note.textContent = !shares ? '' : t(exact ? 'ui.colorSharesExact' : (layers.length > 1 ? 'ui.colorSharesEstimatedLayer' : 'ui.colorSharesEstimated'));
+
+  // Histogram: bars in their band's preview color, contour lines on top.
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight);
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  const g = canvas.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  if (!hist) return;
+  const bins = hist.length;
+  // sqrt scale: binary textures (one spike at each end) still show the middle.
+  let peak = 0;
+  for (const v of hist) peak = Math.max(peak, Math.sqrt(v));
+  const bw = w / bins;
+  for (let b = 0; b < bins; b++) {
+    const bh = peak > 0 ? Math.sqrt(hist[b]) / peak * (h - 2) : 0;
+    g.fillStyle = settings.filamentColors[bandOf((b + 0.5) / bins, T)] || '#888';
+    g.fillRect(b * bw, h - bh, Math.max(1, bw - 0.5), bh);
+  }
+  g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#ddd';
+  g.lineWidth = 1;
+  for (const v of T) {
+    const x = Math.round(v * w) + 0.5;
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+  }
 }
 
 /** Rebuild the preview material's per-layer uniforms and global settings. */
@@ -5376,6 +5612,7 @@ function _syncPreviewMaterial() {
   if (!previewMaterial) return;
   const preview = _previewLayers();
   updateMaterial(previewMaterial, preview.list, _materialSettings(preview));
+  _updateColorStats();
 }
 
 function updatePreview() {
@@ -5410,6 +5647,7 @@ function updatePreview() {
     loadGeometry(activeGeo, previewMaterial);
   } else {
     updateMaterial(previewMaterial, preview.list, _materialSettings(preview));
+    _updateColorStats();
   }
 
   syncBoundaryEdgeUniforms();
@@ -6327,6 +6565,7 @@ function adoptBakedGeometry(geometry, bounds, opts = {}) {
   // Invalidate any in-flight async operations tied to the previous mesh.
   cancelDisplacementPreviewBuild();
   exportToken++;
+  _clearColorResult();
   diagToken++;
 
   // Dispose the previous working geometry so we don't leak GPU buffers. Note

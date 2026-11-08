@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { cutHeightBands, bandOf, bandThresholds, heightRangeMm, paintStateCode } from '../js/colorBands.js';
+import { cutHeightBands, bandOf, bandThresholds, heightRangeMm, paintStateCode, heightHistogram, bandShares } from '../js/colorBands.js';
 import { countEdgeDefects, countAreaSlivers } from '../js/meshRepair.js';
 import { decimate } from '../js/decimation.js';
 
@@ -147,6 +147,8 @@ test('thresholds and height range helpers', () => {
   assert.deepEqual(bandThresholds(3, [70, 30, 90]), [0.3, 0.7]);
   assert.deepEqual(bandThresholds(2, [50]), [0.5]);
   assert.deepEqual(heightRangeMm({ amplitude: 0.6, symmetricDisplacement: false }), { min: 0, max: 0.6 });
+  // "Push in": negative amplitude, the relief lies below the surface.
+  assert.deepEqual(heightRangeMm({ amplitude: -0.6, symmetricDisplacement: false }), { min: -0.6, max: 0 });
   assert.deepEqual(heightRangeMm({}, [{ settings: { amplitude: 1, symmetricDisplacement: true } },
     { settings: { amplitude: 0.4 } }]), { min: -0.5, max: 0.5 });
 });
@@ -158,4 +160,30 @@ test('paint state codes match the slicer TriangleSelector encoding', () => {
   assert.equal(paintStateCode(4), '1C');
   assert.equal(paintStateCode(16), 'DC');
   assert.throws(() => paintStateCode(17));
+});
+
+test('height histogram and band shares', () => {
+  // 4 texels: 0, 64, 191, 255 → heights ~0, .25, .75, 1
+  const data = new Uint8ClampedArray([0,0,0,255, 64,64,64,255, 191,191,191,255, 255,255,255,255]);
+  const hist = heightHistogram({ data, width: 4, height: 1 }, false, { bins: 10 });
+  assert.equal(hist.reduce((a, b) => a + b, 0), 1);
+  assert.deepEqual(bandShares(hist, [0.5]), [0.5, 0.5]);
+  assert.deepEqual(bandShares(hist, [0.1, 0.9]), [0.25, 0.5, 0.25]);
+  // Pushing in flips the heights: white is now the deepest point.
+  const flipped = heightHistogram({ data: new Uint8ClampedArray([255,0,0,255, 255,0,0,255, 0,0,0,255, 0,0,0,255]), width: 4, height: 1 }, true, { bins: 10 });
+  assert.deepEqual(bandShares(flipped, [0.5]), [0.5, 0.5]);
+});
+
+test('with slopes, steep walls count with their real area across all heights', () => {
+  // A binary stripe map (half 0, half 1): seen from above two spikes, no middle.
+  const W = 64, H = 4, data = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) data.fill(x < W / 2 ? 0 : 255, (y * W + x) * 4, (y * W + x) * 4 + 3);
+  const flat = heightHistogram({ data, width: W, height: H }, false);
+  assert.deepEqual(bandShares(flat, [0.2, 0.8]).map(v => +v.toFixed(3)), [0.5, 0, 0.5]);
+  // 2 mm relief on a 1 mm texture: the walls dominate the surface and their
+  // middle part (20-80 %) becomes the largest band.
+  const steep = heightHistogram({ data, width: W, height: H }, false, { slopeU: 2 * W / 1, slopeV: 2 * H / 1 });
+  const [lo, mid, hi] = bandShares(steep, [0.2, 0.8]);
+  assert.ok(mid > lo && mid > hi, `walls must dominate: ${[lo, mid, hi]}`);
+  assert.ok(Math.abs(lo + mid + hi - 1) < 1e-9);
 });

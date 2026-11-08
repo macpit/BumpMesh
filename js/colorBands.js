@@ -30,7 +30,7 @@ export const MAX_FILAMENTS = 16;
 
 /**
  * Range of the composited displacement in mm, for normalising heights.
- * A layer spans [0, amp], or [-amp/2, amp/2] when symmetric; several layers
+ * A layer spans [0, amp] ([amp, 0] when pushing in), or ±|amp|/2 when symmetric; several layers
  * span the union (blend-add layers can exceed it — those heights clamp).
  * @param {object} settings  global settings (single-texture mode)
  * @param {Array<{settings: object}>|null} [layers]
@@ -40,9 +40,11 @@ export function heightRangeMm(settings, layers = null) {
   const list = layers && layers.length ? layers.map(l => l.settings) : [settings];
   let min = Infinity, max = -Infinity;
   for (const s of list) {
-    const amp = Math.abs(+s.amplitude || 0);
-    const lo = s.symmetricDisplacement ? -amp / 2 : 0;
-    const hi = s.symmetricDisplacement ? amp / 2 : amp;
+    // amplitude is negative with "push in" (invertDisplacement): the relief
+    // then spans [amp, 0] and the deepest point is height 0 %.
+    const amp = +s.amplitude || 0;
+    const lo = s.symmetricDisplacement ? -Math.abs(amp) / 2 : Math.min(0, amp);
+    const hi = s.symmetricDisplacement ? Math.abs(amp) / 2 : Math.max(0, amp);
     if (lo < min) min = lo;
     if (hi > max) max = hi;
   }
@@ -282,4 +284,79 @@ export function paintStateCode(state) {
   if (state === 2) return '8';
   const rel = state - 3;
   return (rel % 15).toString(16).toUpperCase() + 'F'.repeat(Math.floor(rel / 15)) + 'C';
+}
+
+/**
+ * Height distribution of a height map, as share of SURFACE per normalised
+ * height bin — what the band shares of a print depend on.
+ *
+ * Without slopes every texel counts once (the map seen from above). With
+ * slopes (the relief's mm per grey step and texel), each texel is weighted by
+ * its true surface area sqrt(1 + |grad|^2) and spread over the heights it
+ * spans towards its neighbours. That is what makes a steep wall count: a
+ * 2 mm wall is invisible from above but carries every height from bottom to
+ * top — on a sharp texture like a maze it is most of the surface.
+ *
+ * @param {{data: Uint8ClampedArray, width?: number, height?: number}} imageData
+ *   greyscale RGBA (red channel)
+ * @param {boolean} pushIn  negative amplitude: the deepest point is white
+ * @param {object} [opts]
+ * @param {number} [opts.bins=100]
+ * @param {number} [opts.slopeU=0]  mm of relief per grey unit per texel step
+ *   along U: |amplitude| * width / sizeU(mm); same for V
+ * @param {number} [opts.slopeV=0]
+ * @returns {Float64Array} shares per bin, summing to 1, with `.areaFactor`:
+ *   textured surface after displacement per unit of surface before it
+ */
+export function heightHistogram(imageData, pushIn, opts = {}) {
+  const bins = opts.bins ?? 100;
+  const sU = opts.slopeU || 0, sV = opts.slopeV || 0;
+  const d = imageData.data;
+  const w = imageData.width || (d.length >> 2), h = imageData.height || 1;
+  const hist = new Float64Array(bins);
+  if (!w || !h) return hist;
+  // Large maps: a sample grid of ~260k texels is plenty for 100 bins.
+  const stride = Math.max(1, Math.ceil(Math.sqrt(w * h / 262144)));
+  const grey = (x, y) => {
+    x = (x + w) % w; y = (y + h) % h;
+    const v = d[(y * w + x) * 4] / 255;
+    return pushIn ? 1 - v : v;
+  };
+  const binOf = (v) => Math.min(bins - 1, Math.max(0, Math.floor(v * bins)));
+  let total = 0, samples = 0;
+  for (let y = 0; y < h; y += stride) {
+    for (let x = 0; x < w; x += stride) {
+      const c = grey(x, y);
+      samples++;
+      if (!sU && !sV) { hist[binOf(c)]++; total++; continue; }
+      const l = grey(x - 1, y), r = grey(x + 1, y), u = grey(x, y - 1), dn = grey(x, y + 1);
+      const gx = (r - l) / 2 * sU, gy = (dn - u) / 2 * sV;
+      const weight = Math.sqrt(1 + gx * gx + gy * gy);
+      // The texel's patch reaches half way to each neighbour.
+      const lo = Math.min(c, (c + l) / 2, (c + r) / 2, (c + u) / 2, (c + dn) / 2);
+      const hi = Math.max(c, (c + l) / 2, (c + r) / 2, (c + u) / 2, (c + dn) / 2);
+      const b0 = binOf(lo), b1 = binOf(hi);
+      if (b0 === b1) {
+        hist[b0] += weight;
+      } else {
+        const span = hi - lo;
+        for (let b = b0; b <= b1; b++) {
+          const overlap = Math.min(hi, (b + 1) / bins) - Math.max(lo, b / bins);
+          if (overlap > 0) hist[b] += weight * overlap / span;
+        }
+      }
+      total += weight;
+    }
+  }
+  if (total > 0) for (let b = 0; b < bins; b++) hist[b] /= total;
+  hist.areaFactor = samples > 0 ? total / samples : 1;
+  return hist;
+}
+
+/** Shares of a height histogram per band for thresholds T (0..1). */
+export function bandShares(hist, T) {
+  const shares = new Array(T.length + 1).fill(0);
+  const bins = hist.length;
+  for (let b = 0; b < bins; b++) shares[bandOf((b + 0.5) / bins, T)] += hist[b];
+  return shares;
 }

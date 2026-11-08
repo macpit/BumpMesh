@@ -449,6 +449,7 @@ const vertexShader = /* glsl */`
   varying vec4  vLayerFalloff;
   varying float vAngleMask;   // angle mask (hard per-face)
   varying float vMaskType;    // boundary mask type (0 = user mask, 1 = angle mask)
+  varying float vHeightMm;    // 3D preview: composited height at the vertex (mm)
 
   #include <clipping_planes_pars_vertex>
 
@@ -476,9 +477,11 @@ const vertexShader = /* glsl */`
     vLayerFalloff = layerFalloff;
     vAngleMask    = angleMask;
     vMaskType     = boundaryMaskTypeAttr;
+    vHeightMm     = 0.0;
 
     if (useDisplacement == 1) {
       float h = compositeHeight(position, safeN, safeN, layerMask * layerFalloff * angleMask);
+      vHeightMm = h;
 
       // Displace along smooth normal so all copies of the same position
       // arrive at the same point (watertight, no cracks).
@@ -537,6 +540,7 @@ const fragmentShader = /* glsl */`
   varying vec4  vLayerFalloff;
   varying float vAngleMask;
   varying float vMaskType;
+  varying float vHeightMm;
 
   #include <clipping_planes_pars_fragment>
 
@@ -658,7 +662,11 @@ const fragmentShader = /* glsl */`
     } else if (colorMode == 2) {
       int band = 0;
       if (coverSum > 0.5) {
-        float H = compositeHeight(vModelPos, PN, vModelNormal, w);
+        // 3D preview: the vertex heights interpolated linearly across each
+        // triangle — the same model as the export's contour cut, so walls
+        // and narrow grooves get the colors the slicer will show. Bump-only
+        // preview has no relief, so it samples the texture per pixel.
+        float H = useDisplacement == 1 ? vHeightMm : compositeHeight(vModelPos, PN, vModelNormal, w);
         float hn = (H - colorHeightRange.x) / max(colorHeightRange.y - colorHeightRange.x, 1e-6);
         if (colorBandCount > 1 && hn >= colorThresholds.x) band = 1;
         if (colorBandCount > 2 && hn >= colorThresholds.y) band = 2;

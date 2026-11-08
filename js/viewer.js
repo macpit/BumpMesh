@@ -26,6 +26,7 @@ let dimensionGroup = null;
 let wireframeLines = null;   // LineSegments overlay, or null when hidden
 let wireframeVisible = false;
 let exclusionMesh = null;    // flat orange overlay for user-excluded faces
+let resultMesh = null;       // computed export result with filament colors (replaces the model while shown)
 let hoverMesh = null;        // semi-transparent yellow bucket-fill preview
 let _exclMaterial = null;
 let _hoverMaterial = null;
@@ -1070,6 +1071,32 @@ export function setViewerTheme(isLight) {
  *
  * @param {THREE.BufferGeometry|null} overlayGeo
  */
+/**
+ * Show (or clear, with null) a computed export result in place of the model:
+ * a non-indexed geometry with a per-vertex `color` attribute. The model mesh
+ * is hidden while a result is shown. Same working space as the model.
+ * @param {THREE.BufferGeometry|null} geometry
+ */
+export function setResultPreview(geometry) {
+  if (resultMesh) {
+    scene.remove(resultMesh);
+    resultMesh.geometry.dispose();
+    resultMesh.material.dispose();
+    resultMesh = null;
+  }
+  if (currentMesh) currentMesh.visible = !geometry;
+  if (geometry) {
+    resultMesh = new THREE.Mesh(geometry, _clip(new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.6,
+      metalness: 0.05,
+      side: THREE.DoubleSide,
+    })));
+    scene.add(resultMesh);
+  }
+  requestRender();
+}
+
 export function setExclusionOverlay(overlayGeo, color = 0xff6600, opacity = 1.0) {
   if (exclusionMesh) {
     scene.remove(exclusionMesh);
