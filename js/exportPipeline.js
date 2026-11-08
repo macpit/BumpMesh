@@ -48,6 +48,8 @@
  *   lockedOverBudget: boolean,  // preserve-untextured beta: locked faces ≥ triangle target
  *   faceParentId: Int32Array|null,   // bake mode only
  *   repairStats: object|null,        // export mode, when repair ran
+ *   faceLabels: Uint8Array|null,     // export mode with settings.colorTexturedFaces:
+ *                                    // 1 = textured face, 0 = untextured, output face order
  * }>}
  */
 
@@ -336,6 +338,12 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
     subdivided = null;
 
     const dispTriCount = displaced.attributes.position.count / 3;
+    // Textured/untextured face labels for the 3MF filament split (#64). Every
+    // later stage either keeps face order (bottom clamp/snap) or carries the
+    // labels itself (decimate, resolveTJunctions).
+    let faceLabels = mode === 'export' && settings.colorTexturedFaces
+      ? displaced.userData.texturedFace || null
+      : null;
     const needsDecimation = dispTriCount > settings.maxTriangles;
     finalGeometry = displaced;
 
@@ -357,8 +365,10 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
         // releaseInput: `displaced` is disposed on the next line and never read
         // again, so decimate may drop its buffers as soon as it has indexed
         // them instead of holding them for the whole collapse loop.
-        true
+        true,
+        faceLabels
       );
+      if (faceLabels) faceLabels = finalGeometry.userData.faceLabels;
       // Capture before repair replaces the geometry (userData isn't carried over).
       lockedOverBudget = !!finalGeometry.userData.lockedOverBudget;
       // Free pre-decimation geometry — decimate created a separate copy.
@@ -385,7 +395,8 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
       onEvent('repair', 0);
       await yieldFrame();
       const beforeSlivers = countAreaSlivers(finalGeometry);
-      const repaired = resolveTJunctions(finalGeometry);
+      const repaired = resolveTJunctions(finalGeometry, { faceLabels });
+      if (faceLabels) faceLabels = repaired.userData.faceLabels;
       finalGeometry.dispose();
       finalGeometry = repaired;
       const after = countEdgeDefects(finalGeometry);
@@ -409,6 +420,7 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
       needsDecimation,
       faceParentId: mode === 'bake' ? faceParentId : null,
       repairStats,
+      faceLabels,
     };
   } finally {
     // Dispose intermediates regardless of success, failure, or abort.

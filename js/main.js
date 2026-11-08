@@ -161,6 +161,9 @@ const settings = {
   // masks) completely untouched, so original fillets and fine CAD detail
   // survive. Subdivision already skips their interior edges regardless.
   preserveUntextured: true,
+  // 3MF export (#64): put textured faces on their own filament (extruder 2)
+  // via slicer paint data; untextured faces stay on extruder 1.
+  colorTexturedFaces: false,
   useDisplacement: false,
   // Cylindrical-mode controls.
   // null/undefined → derive from bounds (preserves legacy / non-cylindrical behavior).
@@ -457,6 +460,7 @@ const harvestFlatChk         = document.getElementById('harvest-flat-chk');
 const harvestTolInput        = document.getElementById('harvest-tol');
 const harvestTolRow          = document.getElementById('harvest-tol-row');
 const preserveUntexturedChk  = document.getElementById('preserve-untextured-chk');
+const colorTexturedChk       = document.getElementById('color-textured-chk');
 
 // ── Exclusion panel DOM refs ──────────────────────────────────────────────────
 const exclBrushBtn        = document.getElementById('excl-brush-btn');
@@ -1778,6 +1782,11 @@ function wireEvents() {
   preserveUntexturedChk.addEventListener('change', () => {
     settings.preserveUntextured = preserveUntexturedChk.checked;
     // Export/bake-time flag only — no preview rebuild needed.
+  });
+  colorTexturedChk.checked = settings.colorTexturedFaces;
+  colorTexturedChk.addEventListener('change', () => {
+    settings.colorTexturedFaces = colorTexturedChk.checked;
+    // 3MF export-time flag only — no preview rebuild needed.
   });
 
   dispPreviewToggle.addEventListener('change', () => {
@@ -5609,7 +5618,8 @@ async function handleExport(format = 'stl') {
       imgWidth: inputs.imgWidth,
       imgHeight: inputs.imgHeight,
       layers: inputs.layers,
-      settings: _owSettings(settings),
+      // Face labels only matter for the 3MF writer; STL exports skip them.
+      settings: { ..._owSettings(settings), colorTexturedFaces: format === '3mf' && settings.colorTexturedFaces },
       bounds: currentBounds,
       regularizeOpts: _regularizeOpts(),
       mode: 'export',
@@ -5659,7 +5669,8 @@ async function handleExport(format = 'stl') {
       setProgress(0.97, t('progress.writing3mf'));
       await yieldFrame();
       if (exportToken !== myToken) return;
-      await export3MF(finalGeometry, `${baseName}.3mf`, () => exportToken !== myToken);
+      await export3MF(finalGeometry, `${baseName}.3mf`, () => exportToken !== myToken,
+        { faceLabels: result.faceLabels || null });
     } else {
       setProgress(0.97, t('progress.writingStl'));
       await yieldFrame();
@@ -6359,7 +6370,7 @@ const PERSISTED_KEYS = [
   'offsetU', 'offsetV', 'rotation', 'rotateAroundZ',
   'amplitude', 'textureHeight', 'invertDisplacement',
   'invertTexture',
-  'symmetricDisplacement', 'noDownwardZ', 'smoothBottom', 'harvestFlatFaces', 'harvestTol', 'preserveUntextured', 'textureSmoothing',
+  'symmetricDisplacement', 'noDownwardZ', 'smoothBottom', 'harvestFlatFaces', 'harvestTol', 'preserveUntextured', 'colorTexturedFaces', 'textureSmoothing',
   'mappingBlend', 'seamBandWidth', 'capAngle', 'boundaryFalloff', 'boundaryFalloffCurve',
   'bottomAngleLimit', 'topAngleLimit',
   'refineLength', 'maxTriangles',
@@ -6645,6 +6656,10 @@ function applySettingsSnapshot(snap) {
     preserveUntexturedChk.checked = snap.preserveUntextured;
     preserveUntexturedChk.dispatchEvent(new Event('change', { bubbles: true }));
   }
+  if (snap.colorTexturedFaces != null) {
+    colorTexturedChk.checked = snap.colorTexturedFaces;
+    colorTexturedChk.dispatchEvent(new Event('change', { bubbles: true }));
+  }
 
   // Cylindrical-mode state. cylinderCenterX/Y/radius pass through unchanged
   // (null is meaningful — falls back to AABB defaults during projection).
@@ -6751,7 +6766,7 @@ const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   offsetU: 0, offsetV: 0, rotation: 0, rotateAroundZ: false,
   amplitude: 0.5, textureHeight: 0.5, invertDisplacement: false,
   invertTexture: false,
-  symmetricDisplacement: false, noDownwardZ: false, smoothBottom: true, harvestFlatFaces: true, harvestTol: 0.005, preserveUntextured: true, textureSmoothing: 0,
+  symmetricDisplacement: false, noDownwardZ: false, smoothBottom: true, harvestFlatFaces: true, harvestTol: 0.005, preserveUntextured: true, colorTexturedFaces: false, textureSmoothing: 0,
   mappingBlend: 1, seamBandWidth: 0.5, capAngle: 20, boundaryFalloff: 0,
   boundaryFalloffCurve: 'ease',
   bottomAngleLimit: 5, topAngleLimit: 0,

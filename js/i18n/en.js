@@ -249,6 +249,8 @@ export default {
   "ui.export3mf": "Export 3MF",
   "tooltips.exportStl": "Widely compatible with all slicers",
   "tooltips.export3mf": "Smaller file size — may not be accepted by all slicers",
+  "ui.colorTextured": "Textured faces as filament 2 (3MF)",
+  "tooltips.colorTextured": "3MF only: textured faces are painted for filament 2, untextured faces stay on filament 1. Bambu Studio, OrcaSlicer and PrusaSlicer pick this up as multi-material painting.",
   "progress.writing3mf": "Writing 3MF…",
   "progress.subdividing": "Subdividing mesh…",
   "progress.refining": "Refining: {cur} triangles, longest edge {edge}",

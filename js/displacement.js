@@ -195,6 +195,14 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
   // its neighbours' other positions are not.
   const excludedPos = ewAttr ? new Uint8Array(uniqueCount) : null;
 
+  // Per-face "textured" flag (#64): 1 where at least one layer actually puts
+  // texture on the face, 0 where it is angle-masked, user-excluded, or masked
+  // out by every layer. Same face order as the input/output geometry, so the
+  // export pipeline can carry it to the 3MF writer and give textured faces
+  // their own filament. Returned on out.userData.texturedFace (a per-face
+  // array does not fit a per-vertex BufferAttribute).
+  const texturedFace = new Uint8Array(triCount);
+
   // Per-layer mask state on the welded vertices. Copies of one position can
   // disagree where hard mask meets soft paint; the most-masked copy wins (the
   // same rule as the seal below), so every copy is displaced identically and
@@ -246,6 +254,19 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
     // the layers are folded, so excluded faces don't reduce displacement on
     // their neighbours through shared boundary vertices.
     const faceMasked = angleMasked;
+
+    if (!angleMasked && !userExcluded) {
+      const f = t / 3;
+      for (const l of layers) {
+        if (!l.legacy && l.hardFaces && l.hardFaces[f]) continue;
+        let soft = 0;
+        if (l.legacy ? l._seAttr : l.exclude) {
+          for (let v = 0; v < 3; v++) soft += l.legacy ? l._seAttr.getX(t + v) : l.exclude[t + v];
+          soft /= 3;
+        }
+        if (soft <= 0.99) { texturedFace[f] = 1; break; }
+      }
+    }
 
     // For cubic mapping: distribute this face's area across projection zones
     // proportionally to its blend weights.  When blend=0, getCubicBlendWeights
@@ -758,6 +779,7 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
   const out = new THREE.BufferGeometry();
   out.setAttribute('position', new THREE.BufferAttribute(newPos, 3));
   out.setAttribute('normal',   new THREE.BufferAttribute(newNrm, 3));
+  out.userData.texturedFace = texturedFace;
   return out;
 }
 

@@ -49,6 +49,13 @@
  *   touch are left completely untouched. If locked faces alone reach the
  *   triangle target the run degrades to harvest-only and the returned
  *   geometry carries userData.lockedOverBudget = true.
+ * @param {boolean}              [releaseInput]  drop the input's buffers once indexed
+ * @param {Uint8Array|null}      [faceLabels]    per-face label in the input's face
+ *   order (e.g. textured / untextured, #64). Vertices where faces of different
+ *   labels meet are pinned like locked vertices, so the label boundary keeps
+ *   its exact shape and no collapse drags one label's area across the other.
+ *   The surviving faces' labels are returned as userData.faceLabels, in
+ *   output face order.
  * @returns {THREE.BufferGeometry}
  */
 
@@ -113,7 +120,7 @@ function _yieldFrame() {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-export async function decimate(geometry, targetTriangles, onProgress, harvestFlat = true, harvestTol = DEFAULT_HARVEST_TOL, lockedFaces = null, releaseInput = false) {
+export async function decimate(geometry, targetTriangles, onProgress, harvestFlat = true, harvestTol = DEFAULT_HARVEST_TOL, lockedFaces = null, releaseInput = false, faceLabels = null) {
   const { positions, faces, vertCount, faceCount } = buildIndexed(geometry);
 
   // buildIndexed is the ONLY reader of `geometry`; everything below works off
@@ -130,7 +137,7 @@ export async function decimate(geometry, targetTriangles, onProgress, harvestFla
 
   // Already at/under the target: nothing to decimate. But if harvesting is on we
   // still run — there may be flat faces collapsible for free even below the limit.
-  if (faceCount <= targetTriangles && !harvestFlat) return buildOutput(positions, faces, faceCount);
+  if (faceCount <= targetTriangles && !harvestFlat) return buildOutput(positions, faces, faceCount, faceLabels);
 
   // Preserve-untextured (beta): a vertex touching any locked (untextured) face
   // may neither move nor be removed, so edges with a locked endpoint are never
@@ -149,16 +156,35 @@ export async function decimate(geometry, targetTriangles, onProgress, harvestFla
       lockedVert[faces[f * 3 + 2]] = 1;
     }
   }
+  // Label boundary (#64): pin every vertex shared by faces of different labels.
+  // Only the pinning is shared with lockedVert — lockedFaceCount (and with it
+  // lockedOverBudget) still counts the preserve-untextured faces alone.
+  if (faceLabels) {
+    const firstLabel = new Int16Array(vertCount).fill(-1);
+    for (let f = 0; f < faceCount; f++) {
+      if (faces[f * 3] < 0) continue;
+      const L = faceLabels[f];
+      for (let k = 0; k < 3; k++) {
+        const v = faces[f * 3 + k];
+        if (firstLabel[v] === -1) firstLabel[v] = L;
+        else if (firstLabel[v] !== L) {
+          if (!lockedVert) lockedVert = new Uint8Array(vertCount);
+          lockedVert[v] = 1;
+        }
+      }
+    }
+  }
+
   // When the locked faces alone meet or exceed the triangle target, the target
   // is unreachable without touching untextured geometry. Chasing it anyway
   // would grind the textured region down to its guard limit, so instead drop
   // straight to error-bounded harvesting (or bail entirely when harvesting is
   // off) and flag the overrun so the caller can warn the user.
-  const lockedOverBudget = lockedVert !== null && faceCount > targetTriangles
+  const lockedOverBudget = lockedFaces !== null && faceCount > targetTriangles
     && lockedFaceCount >= targetTriangles;
   if (lockedOverBudget && !harvestFlat) {
     if (onProgress) onProgress(1);
-    const out = buildOutput(positions, faces, faceCount);
+    const out = buildOutput(positions, faces, faceCount, faceLabels);
     out.userData.lockedOverBudget = true;
     return out;
   }
@@ -332,7 +358,7 @@ export async function decimate(geometry, targetTriangles, onProgress, harvestFla
   }
 
   if (onProgress) onProgress(1);
-  const out = buildOutput(positions, faces, faceCount);
+  const out = buildOutput(positions, faces, faceCount, faceLabels);
   if (lockedOverBudget) out.userData.lockedOverBudget = true;
   return out;
 }
@@ -758,10 +784,14 @@ function buildIndexed(geometry) {
 
 // (adjacency helpers replaced by buildLinkedAdj and _unlinkSlot/_moveSlot above)
 
-function buildOutput(positions, faces, faceCount) {
+function buildOutput(positions, faces, faceCount, faceLabels = null) {
   let activeFaces = 0;
   for (let f = 0; f < faceCount; f++) {
     if (faces[f * 3] >= 0) activeFaces++;
+  }
+  const outLabels = faceLabels ? new Uint8Array(activeFaces) : null;
+  if (outLabels) {
+    for (let f = 0, o = 0; f < faceCount; f++) if (faces[f * 3] >= 0) outLabels[o++] = faceLabels[f];
   }
 
   const posArray = new Float32Array(activeFaces * 9);
@@ -796,6 +826,7 @@ function buildOutput(positions, faces, faceCount) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
   geo.setAttribute('normal',   new THREE.BufferAttribute(nrmArray, 3));
+  if (outLabels) geo.userData.faceLabels = outLabels;
   return geo;
 }
 

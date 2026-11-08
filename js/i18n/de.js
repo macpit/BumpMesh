@@ -249,6 +249,8 @@ export default {
   "ui.export3mf": "3MF exportieren",
   "tooltips.exportStl": "Mit allen Slicern kompatibel",
   "tooltips.export3mf": "Kleinere Dateigröße — möglicherweise nicht von allen Slicern akzeptiert",
+  "ui.colorTextured": "Texturierte Flächen als Filament 2 (3MF)",
+  "tooltips.colorTextured": "Nur 3MF: Texturierte Flächen werden für Filament 2 bemalt, untexturierte bleiben auf Filament 1. Bambu Studio, OrcaSlicer und PrusaSlicer übernehmen das als Multi-Material-Bemalung.",
   "progress.writing3mf": "3MF wird geschrieben…",
   "progress.subdividing": "Netz wird verfeinert…",
   "progress.refining": "Verfeinern: {cur} Dreiecke, längste Kante {edge}",

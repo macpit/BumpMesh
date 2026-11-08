@@ -29,6 +29,10 @@
  *        T-junctions slipped through. 20µm catches them with margin while staying far
  *        too small to wrongly split unrelated geometry (the weld grid is 100µm).
  * @param {number} [opts.maxIters=16]    cascade-split iteration cap
+ * @param {Uint8Array|null} [opts.faceLabels]  per-face label in input face order
+ *   (#64). Carried as a 4th slot on each face triple: dropped degenerates drop
+ *   their label, split faces inherit their parent's. Returned as
+ *   userData.faceLabels in output face order.
  * @returns {THREE.BufferGeometry}  repaired non-indexed geometry
  */
 import { THREE } from './threeCompat.js';
@@ -107,6 +111,7 @@ export function resolveTJunctions(geometry, opts = {}) {
   const Q       = opts.weldQuant ?? 1e4;
   const onTol   = opts.onSegTol  ?? 0.02;
   const maxIters = opts.maxIters ?? 16;
+  const labelsIn = opts.faceLabels || null;
   const onTol2  = onTol * onTol;
 
   const pos  = geometry.attributes.position.array;
@@ -151,7 +156,7 @@ export function resolveTJunctions(geometry, opts = {}) {
     const wx = vx[c]-vx[a], wy = vy[c]-vy[a], wz = vz[c]-vz[a];
     const cx = uy*wz - uz*wy, cy = uz*wx - ux*wz, cz = ux*wy - uy*wx;
     if (cx*cx + cy*cy + cz*cz < DEGEN_AREA2) { droppedNeedles++; continue; }
-    faces.push([a, b, c]);
+    faces.push([a, b, c, labelsIn ? labelsIn[t] : 0]);
   }
 
   for (let iter = 0; iter < maxIters; iter++) {
@@ -244,7 +249,7 @@ export function resolveTJunctions(geometry, opts = {}) {
       let dirAB = false;
       for (let e = 0; e < 3; e++) if (f[e] === a && f[(e+1)%3] === b) { dirAB = true; break; }
       const seq = dirAB ? [a, ...mids, b] : [b, ...mids.slice().reverse(), a];
-      for (let s = 0; s < seq.length - 1; s++) next.push([seq[s], seq[s+1], apex]);
+      for (let s = 0; s < seq.length - 1; s++) next.push([seq[s], seq[s+1], apex, f[3]]);
     }
     faces = next;
   }
@@ -269,5 +274,10 @@ export function resolveTJunctions(geometry, opts = {}) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(out, 3));
   g.setAttribute('normal',   new THREE.BufferAttribute(nrm, 3));
+  if (labelsIn) {
+    const labelsOut = new Uint8Array(faces.length);
+    for (let i = 0; i < faces.length; i++) labelsOut[i] = faces[i][3];
+    g.userData.faceLabels = labelsOut;
+  }
   return g;
 }

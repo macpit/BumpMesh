@@ -96,12 +96,18 @@ export function exportSTL(geometry, filename = 'textured.stl') {
  * tolerance) so the output is both smaller than binary STL and round-trippable
  * by this project's own 3MF loader.
  *
+ * With `faceLabels` (#64) the textured faces get their own filament: every
+ * face labelled 1 is painted for extruder 2, the rest stay on the object's
+ * default extruder 1. See paintedPackage() for the package layout.
+ *
  * @param {THREE.BufferGeometry} geometry  – non-indexed with position attribute
  * @param {string} [filename]
  * @param {() => boolean} [shouldAbort]
+ * @param {object} [opts]
+ * @param {Uint8Array|null} [opts.faceLabels]  per-face label, 1 = textured
  * @returns {Promise<void>}
  */
-export async function export3MF(geometry, filename = 'textured.3mf', shouldAbort = () => false) {
+export async function export3MF(geometry, filename = 'textured.3mf', shouldAbort = () => false, opts = {}) {
   if (shouldAbort()) throw new Error('Aborted');
   const posArr = geometry.attributes.position.array;
 
@@ -128,6 +134,17 @@ export async function export3MF(geometry, filename = 'textured.3mf', shouldAbort
       if (indexMap.inserted) uniqueXYZ.push(x, y, z);
       triIdx[i * 3 + j] = idx;
     }
+  }
+
+  const faceLabels = opts.faceLabels || null;
+  if (faceLabels && faceLabels.length !== triCount) {
+    throw new Error('3MF export: face labels do not match the triangle count');
+  }
+  if (faceLabels && faceLabels.includes(1)) {
+    const blob = await zipChunks(paintedPackage(uniqueXYZ, triIdx, faceLabels), shouldAbort);
+    if (shouldAbort()) throw new Error('Aborted');
+    triggerDownload(blob, filename);
+    return;
   }
 
   // ── Static package files ─────────────────────────────────────────────────
@@ -157,13 +174,25 @@ export async function export3MF(geometry, filename = 'textured.3mf', shouldAbort
 
 // Generate bounded XML chunks directly into the compressor. Keeping all XML
 // chunks and then concatenating them used two full uncompressed mesh copies.
-function* modelChunks(vertices, indices) {
-  const enc = new TextEncoder();
-  const threshold = 1 << 20;
-  let pending = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+//
+// `layout` lets the painted package reuse the streaming writer: its own
+// <model>/<object> header and footer, plus `triAttr(i)` returning extra
+// attributes for triangle i. The default reproduces the plain export exactly.
+const PLAIN_LAYOUT = {
+  head: '<?xml version="1.0" encoding="UTF-8"?>\n' +
     '<model unit="millimeter" xml:lang="en-US" ' +
     'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n' +
-    '<resources>\n<object id="1" type="model">\n<mesh>\n<vertices>\n';
+    '<resources>\n<object id="1" type="model">\n',
+  tail: '</object>\n</resources>\n' +
+    '<build>\n<item objectid="1"/>\n</build>\n</model>\n',
+  triAttr: null,
+};
+
+function* modelChunks(vertices, indices, layout = PLAIN_LAYOUT) {
+  const enc = new TextEncoder();
+  const threshold = 1 << 20;
+  const triAttr = layout.triAttr;
+  let pending = layout.head + '<mesh>\n<vertices>\n';
   const fmt = (n) => {
     // 4 decimals matches the dedup precision; strip trailing zeros and ".".
     let s = n.toFixed(4);
@@ -177,10 +206,120 @@ function* modelChunks(vertices, indices) {
   }
   pending += '</vertices>\n<triangles>\n';
   for (let i = 0; i < indices.length; i += 3) {
-    pending += `<triangle v1="${indices[i]}" v2="${indices[i+1]}" v3="${indices[i+2]}"/>\n`;
+    const extra = triAttr ? triAttr(i / 3) : '';
+    pending += `<triangle v1="${indices[i]}" v2="${indices[i+1]}" v3="${indices[i+2]}"${extra}/>\n`;
     if (pending.length >= threshold) { yield enc.encode(pending); pending = ''; }
   }
-  pending += '</triangles>\n</mesh>\n</object>\n</resources>\n' +
-    '<build>\n<item objectid="1"/>\n</build>\n</model>\n';
+  pending += '</triangles>\n</mesh>\n' + layout.tail;
   yield enc.encode(pending);
+}
+
+// ── Painted 3MF (#64: textured faces on their own filament) ────────────────
+//
+// Slicers store per-face filament assignments as a TriangleSelector state
+// string per triangle: `paint_color` (Bambu Studio, OrcaSlicer) and
+// `slic3rpe:mmu_segmentation` (PrusaSlicer), same encoding. A whole,
+// unsplit face in state 2 (extruder 2) serialises as the single nibble
+// (2 << 2) = "8"; faces without the attribute keep the object's extruder 1.
+//
+// Package layout taken from PR #121 (birnam), which tested it against Bambu
+// Studio, OrcaSlicer, Snapmaker Orca and PrusaSlicer: a single-file 3MF with
+// only paint attributes loads in PrusaSlicer but Bambu-family slicers treat a
+// foreign 3MF as "geometry only" and drop the paint. They keep it when the
+// package looks like their own project: root model with the
+// BambuStudio:3mfVersion metadata whose object is a <component> pointing at
+// the mesh in 3D/Objects/, plus Metadata/model_settings.config and
+// slice_info.config. No project_settings.config — even a minimal one makes
+// Bambu/Orca fabricate broken presets on import. This project's own loader
+// reads the component layout, so the file still round-trips.
+const NS_CORE  = 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02';
+const NS_BAMBU = 'http://schemas.bambulab.com/package/2021';
+const NS_PROD  = 'http://schemas.microsoft.com/3dmanufacturing/production/2015/06';
+const NS_SLIC3R = 'http://schemas.slic3r.org/3mf/2017/06';
+const PAINT_TEXTURED = ' paint_color="8" slic3rpe:mmu_segmentation="8"';
+
+function uuid() {
+  return (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : '00000000-0000-4000-8000-000000000000';
+}
+
+function paintedPackage(vertices, indices, faceLabels) {
+  const MESH_ID = 1, ROOT_ID = 2;
+  const name = 'Textured';
+
+  const meshLayout = {
+    head: '<?xml version="1.0" encoding="UTF-8"?>\n' +
+      `<model unit="millimeter" xml:lang="en-US" xmlns="${NS_CORE}" ` +
+      `xmlns:BambuStudio="${NS_BAMBU}" xmlns:slic3rpe="${NS_SLIC3R}" ` +
+      `xmlns:p="${NS_PROD}" requiredextensions="p">\n` +
+      `<resources>\n<object id="${MESH_ID}" p:UUID="${uuid()}" type="model">\n`,
+    tail: '</object>\n</resources>\n<build/>\n</model>\n',
+    triAttr: (t) => (faceLabels[t] ? PAINT_TEXTURED : ''),
+  };
+
+  const rootModelXml =
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    `<model unit="millimeter" xml:lang="en-US" xmlns="${NS_CORE}" ` +
+    `xmlns:BambuStudio="${NS_BAMBU}" xmlns:p="${NS_PROD}" requiredextensions="p">\n` +
+    '<metadata name="Application">BumpMesh</metadata>\n' +
+    '<metadata name="BambuStudio:3mfVersion">1</metadata>\n' +
+    '<resources>\n' +
+    `<object id="${ROOT_ID}" p:UUID="${uuid()}" type="model">\n<components>\n` +
+    `<component p:path="/3D/Objects/Object_1.model" objectid="${MESH_ID}" ` +
+    `p:UUID="${uuid()}" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>\n` +
+    '</components>\n</object>\n</resources>\n' +
+    `<build p:UUID="${uuid()}">\n` +
+    `<item objectid="${ROOT_ID}" p:UUID="${uuid()}" printable="1"/>\n` +
+    '</build>\n</model>\n';
+
+  const modelSettingsXml =
+    '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n' +
+    `<object id="${ROOT_ID}">\n` +
+    `<metadata key="name" value="${name}"/>\n` +
+    '<metadata key="extruder" value="1"/>\n' +
+    `<part id="${MESH_ID}" subtype="normal_part">\n` +
+    `<metadata key="name" value="${name}"/>\n` +
+    '<metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>\n' +
+    '</part>\n</object>\n' +
+    '<plate>\n<metadata key="plater_id" value="1"/>\n' +
+    '<metadata key="plater_name" value=""/>\n<metadata key="locked" value="false"/>\n' +
+    `<model_instance>\n<metadata key="object_id" value="${ROOT_ID}"/>\n` +
+    '<metadata key="instance_id" value="0"/>\n<metadata key="identify_id" value="1"/>\n' +
+    '</model_instance>\n</plate>\n' +
+    `<assemble>\n<assemble_item object_id="${ROOT_ID}" instance_id="0" ` +
+    'transform="1 0 0 0 1 0 0 0 1 0 0 0" offset="0 0 0"/>\n</assemble>\n</config>\n';
+
+  const sliceInfoXml =
+    '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n<header>\n' +
+    '<header_item key="X-BBL-Client-Type" value="slicer"/>\n' +
+    '<header_item key="X-BBL-Client-Version" value=""/>\n' +
+    '</header>\n</config>\n';
+
+  // Every OPC part needs a resolvable content type; PrusaSlicer's reader
+  // rejects the package if the Metadata/*.config parts have none.
+  const contentTypesXml =
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n' +
+    '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n' +
+    '<Default Extension="config" ContentType="application/octet-stream"/>\n' +
+    '</Types>\n';
+
+  const rel = (target) =>
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n' +
+    `<Relationship Id="rel-1" Target="${target}" ` +
+    'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>\n' +
+    '</Relationships>\n';
+
+  return [
+    ['[Content_Types].xml', [strToU8(contentTypesXml)]],
+    ['_rels/.rels', [strToU8(rel('/3D/3dmodel.model'))]],
+    ['3D/3dmodel.model', [strToU8(rootModelXml)]],
+    ['3D/_rels/3dmodel.model.rels', [strToU8(rel('/3D/Objects/Object_1.model'))]],
+    ['3D/Objects/Object_1.model', modelChunks(vertices, indices, meshLayout)],
+    ['Metadata/model_settings.config', [strToU8(modelSettingsXml)]],
+    ['Metadata/slice_info.config', [strToU8(sliceInfoXml)]],
+  ];
 }
