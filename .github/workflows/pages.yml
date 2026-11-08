@@ -1,0 +1,43 @@
+# Publishes the app to GitHub Pages (https://macpit.github.io/stlTexturizer/)
+# on every push, so the most recently pushed branch is always online to try.
+# The upstream CNAME (bumpmesh.com) is left out: that domain belongs to the
+# original site, not to this fork.
+name: Pages
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare site
+        run: |
+          rm -f CNAME
+          mkdir -p _site
+          rsync -a --exclude '.git' --exclude '.github' --exclude '_site' \
+            --exclude 'tests' --exclude 'node_modules' --exclude '*.mjs' \
+            --exclude 'Dockerfile' --exclude '*compose.yaml' --exclude 'nginx.conf' \
+            ./ _site/
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
