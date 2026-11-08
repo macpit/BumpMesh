@@ -382,6 +382,37 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
       if (!any) paintedFil = null;
     }
 
+    // Ornament filaments (Ornaments ▸ Filament): cut the mesh exactly along
+    // the pattern's edge (value 0.5) and give the inside the ornament's
+    // filament. Heights ride along for a later color-by-height cut.
+    let ornFil = null;
+    const orn = mode === 'export' ? displaced.userData.ornament : null;
+    if (orn && orn.value.some(v => v > 0.5)) {
+      onEvent('colorBands', 0);
+      await yieldFrame();
+      const hMm = displaced.userData.heightMm || null;
+      const tex = displaced.userData.texturedFace || null;
+      const cut = cutHeightBands(displaced.attributes.position.array, orn.value, null, [0.5],
+        hMm ? { carry: hMm } : {});
+      const n = cut.labels.length;
+      ornFil = new Uint8Array(n);
+      for (let t = 0; t < n; t++) if (cut.labels[t]) ornFil[t] = orn.faceFilament[cut.parent[t]];
+      const remap = (arr) => {
+        if (!arr) return null;
+        const r = new Uint8Array(n);
+        for (let t = 0; t < n; t++) r[t] = arr[cut.parent[t]];
+        return r;
+      };
+      paintedFil = remap(paintedFil);
+      lockedFaces = remap(lockedFaces);
+      const texR = remap(tex);
+      displaced.dispose();
+      displaced = flatGeometry(cut.positions);
+      if (texR) displaced.userData.texturedFace = texR;
+      if (cut.carried) displaced.userData.heightMm = cut.carried;
+      if (shouldAbort()) return null;
+    }
+
     // Face labels for the 3MF filament split: label = filament - 1. Every
     // later stage either keeps face order (bottom clamp/snap) or carries the
     // labels itself (decimate, resolveTJunctions).
@@ -410,6 +441,11 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
         for (let t = 0; t < remapped.length; t++) remapped[t] = paintedFil[cut.parent[t]];
         paintedFil = remapped;
       }
+      if (ornFil) {
+        const remapped = new Uint8Array(cut.parent.length);
+        for (let t = 0; t < remapped.length; t++) remapped[t] = ornFil[cut.parent[t]];
+        ornFil = remapped;
+      }
       if (lockedFaces) {
         const remapped = new Uint8Array(cut.parent.length);
         for (let t = 0; t < remapped.length; t++) remapped[t] = lockedFaces[cut.parent[t]];
@@ -418,8 +454,12 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
       if (shouldAbort()) return null;
     }
 
-    // Painted filaments win over the automatic split; with Assign off the
-    // rest of the model stays on filament 1.
+    // Ornament filaments over the automatic split, painted filaments over
+    // both; with Assign off the rest of the model stays on filament 1.
+    if (ornFil) {
+      faceLabels = faceLabels ? new Uint8Array(faceLabels) : new Uint8Array(ornFil.length);
+      for (let t = 0; t < ornFil.length; t++) if (ornFil[t]) faceLabels[t] = ornFil[t] - 1;
+    }
     if (paintedFil) {
       if (!faceLabels) faceLabels = new Uint8Array(paintedFil.length);
       else faceLabels = new Uint8Array(faceLabels);

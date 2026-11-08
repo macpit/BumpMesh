@@ -133,6 +133,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><path d="M4 8h9v9H4z"/><path d="M13 8l7-4v9l-7 4"/><path d="M4 8l7-4h9"/><path d="M8.5 8v9M4 12.5h9" opacity=".55"/></svg>
         <span data-i18n="steps.projection">Projection</span>
       </button>
+      <button type="button" class="rail-btn" data-step="ornaments" data-i18n-title="steps.ornamentsTitle" title="Ornaments: stamps and borders">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 18h18"/><path d="M4 18v-9h6v6H7v-3M13 18v-9h6v6h-3v-3"/></svg>
+        <span data-i18n="steps.ornaments">Ornaments</span>
+      </button>
       <button type="button" class="rail-btn" data-step="height" data-i18n-title="steps.heightTitle" title="Height: texture depth, overhangs, bottom">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 18c2.5 0 2.5-6 5-6s2.5 4 5 4 2.5-9 5-9 2.5 11 5 11"/><path d="M20 3v5M18 5l2-2 2 2" /></svg>
         <span data-i18n="steps.height">Height</span>
@@ -375,7 +379,7 @@
             <span data-i18n="ui.uploadCustomMap">Upload custom map</span>
           </label>
         </div>
-        <input type="file" id="texture-file-input" accept="image/*,.texture" hidden />
+        <input type="file" id="texture-file-input" accept="image/*,.texture,.svg" hidden />
         <div id="custom-map-row" class="custom-map-row hidden">
           <div id="custom-map-swatch" class="preset-swatch custom-map-swatch" role="button" tabindex="0" data-i18n-title="ui.customMap" title="Custom map"></div>
           <button id="custom-map-remove" class="custom-map-remove" data-i18n-title="ui.removeCustomMap" data-i18n-aria-label="ui.removeCustomMap" title="Remove custom map" aria-label="Remove custom map">
@@ -477,7 +481,23 @@
               title="Reset to AABB center and AABB-derived radius.">Reset</button>
           </div>
         </div>
-        <div class="form-row" id="stamp-mode-row">
+      </section>
+
+      <!-- Ornaments: a stamp (placed once) or a border (repeats around the axis) on the active texture layer -->
+      <section class="panel-section" data-step="ornaments">
+        <h2 data-i18n="orn.heading">Ornaments</h2>
+        <p class="advanced-blurb" data-i18n="orn.intro">Place a motif once, or run a border around the model. It uses the selected texture layer; add a layer under Texture to combine it with a tiled texture.</p>
+        <div class="excl-tools orn-tools">
+          <button type="button" id="orn-stamp-btn" class="excl-tool-btn" aria-pressed="false" data-i18n-title="orn.stampTitle" title="Stamp: the image once, for logos, badges and labels. Click the model to place it.">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6v5l3 3H6l3-3z"/><path d="M5 14h14v3H5z"/><path d="M4 21h16"/></svg>
+            <span data-i18n="orn.stamp">Stamp</span>
+          </button>
+          <button type="button" id="orn-border-btn" class="excl-tool-btn" aria-pressed="false" data-i18n-title="orn.borderTitle" title="Border: the image repeats around the model as a band, like the friezes on a Greek vase.">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M2 8h20M2 16h20"/><path d="M4 16v-6h5v4H6v-2M12 16v-6h5v4h-3v-2"/></svg>
+            <span data-i18n="orn.border">Border</span>
+          </button>
+        </div>
+        <div class="form-row" id="stamp-mode-row" style="display:none">
           <div class="cylinder-axis-controls">
             <button id="stamp-mode-btn" type="button" class="cylinder-axis-btn" aria-pressed="false"
               data-i18n="ui.stampMode"
@@ -494,6 +514,64 @@
           </div>
         </div>
         <p id="stamp-hint" class="advanced-blurb stamp-hint" style="display:none" data-i18n="ui.stampHint">Drag the stamp on the model to move it, then scroll to resize it.</p>
+        <!-- Relief, depth and filament of the ornament (stamp or border) -->
+        <div id="orn-common-box" class="orn-border-box" hidden>
+          <div class="form-row">
+            <span class="form-row-label" data-i18n="orn.relief" data-i18n-title="orn.reliefTitle" title="Raised stands out, engraved is pressed in, flat has no height: the ornament only shows through its filament, like painted on.">Relief</span>
+            <div class="excl-seg" role="group">
+              <button type="button" class="excl-seg-btn" data-orn-relief="raised" data-i18n="orn.raised" data-i18n-title="orn.raisedTitle" title="The ornament stands out.">Raised</button>
+              <button type="button" class="excl-seg-btn" data-orn-relief="engraved" data-i18n="orn.engraved" data-i18n-title="orn.engravedTitle" title="The ornament is pressed into the surface.">Engraved</button>
+              <button type="button" class="excl-seg-btn" data-orn-relief="flat" data-i18n="orn.flat" data-i18n-title="orn.flatTitle" title="No height: the ornament is only its filament, like painted on. Pick a filament below.">Flat</button>
+            </div>
+          </div>
+          <div class="form-row slider-row">
+            <label for="orn-depth" data-i18n="orn.depth" data-i18n-title="orn.depthTitle" title="Height of the ornament in mm, independent of other texture layers (the same value as Height ▸ Texture height of this layer).">Depth (mm)</label>
+            <input type="range" id="orn-depth" min="0" max="2" step="0.01" value="0.5" />
+            <input type="number" class="val" id="orn-depth-val" min="0" max="20" step="0.01" value="0.5" />
+          </div>
+          <div class="form-row">
+            <label for="orn-filament" data-i18n="orn.filament" data-i18n-title="orn.filamentTitle" title="Print the ornament in its own filament (3MF). The border of the pattern is cut exactly, like color by height.">Filament</label>
+            <select id="orn-filament">
+              <option value="0" data-i18n-opt="orn.filamentNone">Same as the model</option>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+            </select>
+            <input type="color" id="orn-color" class="filament-swatch orn-color" value="#d9532b" data-i18n-title="orn.colorTitle" title="Color of the ornament. Picks a filament of its own if it has none yet; in the slicer, give that filament this color." />
+          </div>
+          <p id="orn-color-hint" class="orn-hint" hidden></p>
+          <div class="form-row slider-row" id="orn-spread-row">
+            <label for="orn-spread" data-i18n="orn.spread" data-i18n-title="orn.spreadTitle" title="How far the ornament color spreads into the pattern: low = only the strongest lines, high = up to the faintest. 50 % cuts at mid grey.">Color spread (%)</label>
+            <input type="range" id="orn-spread" min="2" max="98" step="1" value="50" />
+            <input type="number" class="val" id="orn-spread-val" min="2" max="98" step="1" value="50" />
+          </div>
+        </div>
+        <div id="orn-border-box" class="orn-border-box" hidden>
+          <div class="form-row slider-row">
+            <label for="orn-repeats" data-i18n="orn.repeats" data-i18n-title="orn.repeatsTitle" title="How many times the pattern runs around. Whole numbers only, so the border closes without a seam.">Repeats around</label>
+            <input type="range" id="orn-repeats" min="1" max="72" step="1" value="12" />
+            <input type="number" class="val" id="orn-repeats-val" min="1" max="400" step="1" value="12" />
+          </div>
+          <div class="form-row slider-row">
+            <label for="orn-repeats-v" data-i18n="orn.repeatsV" data-i18n-title="orn.repeatsVTitle" title="How many rows of the pattern are stacked in the band, one above the other.">Rows</label>
+            <input type="range" id="orn-repeats-v" min="1" max="12" step="1" value="1" />
+            <input type="number" class="val" id="orn-repeats-v-val" min="1" max="100" step="1" value="1" />
+          </div>
+          <div class="form-row slider-row">
+            <label for="orn-height" data-i18n="orn.height" data-i18n-title="orn.heightTitle" title="Where the band sits: height of its centre above the bottom, in mm. Or click the model with Position on model.">Height (mm)</label>
+            <input type="range" id="orn-height" min="0" max="100" step="0.1" value="50" />
+            <input type="number" class="val" id="orn-height-val" min="0" step="0.1" value="50" />
+          </div>
+          <div class="form-row slider-row">
+            <label for="orn-width" data-i18n="orn.width" data-i18n-title="orn.widthTitle" title="Width of the band, in mm.">Width (mm)</label>
+            <input type="range" id="orn-width" min="1" max="100" step="0.1" value="10" />
+            <input type="number" class="val" id="orn-width-val" min="0.5" step="0.1" value="10" />
+          </div>
+          <div class="orn-foot">
+            <button type="button" id="orn-fit-btn" class="scale-reset-btn" data-i18n="orn.fit" data-i18n-title="orn.fitTitle" title="Repeats so one repeat keeps the pattern's own proportions at this width.">Fit to pattern</button>
+          </div>
+        </div>
+        <div class="orn-foot">
+          <label for="texture-file-input" class="scale-reset-btn orn-load" role="button" tabindex="0" data-i18n="orn.load" data-i18n-title="orn.loadTitle" title="Load an SVG (or image) as the pattern of this layer. SVG: one repeat per file, black shapes on transparent = raised.">Load pattern (SVG)…</label>
+        </div>
       </section>
 
       <!-- Displacement -->

@@ -94,12 +94,18 @@ export function cutHeightBands(positions, heights, textured, T, opts = {}) {
   const map = new QuantizedPointMap(1e6, Math.min(triCount * 3, 1 << 22));
   let vx = new Float64Array(Math.max(16, triCount * 2));
   let vy = new Float64Array(vx.length), vz = new Float64Array(vx.length), vh = new Float64Array(vx.length);
+  // opts.carry: another per-corner value (per position) interpolated onto
+  // the cut points and returned per output corner — lets a second cut run on
+  // the result (ornament filament cut, then color by height).
+  const carry = opts.carry || null;
+  let vc = carry ? new Float64Array(vx.length) : null;
   let vCount = 0;
   const corner = new Int32Array(triCount * 3);
   const grow = () => {
     const n = vx.length * 2;
     const g = (a) => { const b = new Float64Array(n); b.set(a); return b; };
     vx = g(vx); vy = g(vy); vz = g(vz); vh = g(vh);
+    if (vc) vc = g(vc);
   };
   for (let i = 0; i < triCount * 3; i++) {
     const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
@@ -107,6 +113,7 @@ export function cutHeightBands(positions, heights, textured, T, opts = {}) {
     if (map.inserted) {
       if (vCount >= vx.length) grow();
       vx[id] = x; vy[id] = y; vz[id] = z; vh[id] = heights[i];
+      if (vc) vc[id] = carry[i];
       vCount++;
     }
     corner[i] = id;
@@ -150,9 +157,10 @@ export function cutHeightBands(positions, heights, textured, T, opts = {}) {
   let cutCount = new Int32Array(cutStart.length);
   const cutIds = [];
   let cutEdges = 0;
-  const addVertex = (x, y, z, h) => {
+  const addVertex = (x, y, z, h, c = 0) => {
     if (vCount >= vx.length) grow();
     vx[vCount] = x; vy[vCount] = y; vz[vCount] = z; vh[vCount] = h;
+    if (vc) vc[vCount] = c;
     return vCount++;
   };
   for (let t = 0; t < triCount; t++) {
@@ -180,7 +188,8 @@ export function cutHeightBands(positions, heights, textured, T, opts = {}) {
           vx[lo] + (vx[hi] - vx[lo]) * s,
           vy[lo] + (vy[hi] - vy[lo]) * s,
           vz[lo] + (vz[hi] - vz[lo]) * s,
-          T[k]));
+          T[k],
+          vc ? vc[lo] + (vc[hi] - vc[lo]) * s : 0));
       }
       cutCount[slot] = ks.length;
       if (ks.length) cutEdges++;
@@ -191,6 +200,7 @@ export function cutHeightBands(positions, heights, textured, T, opts = {}) {
   const outPos = [];
   const outLab = [];
   const outPar = [];
+  const outCarry = [];
   const ring = [];
   const pushTri = (a, b, c, label, parent) => {
     // Skip exact zero-area triangles (collinear contour points on one edge);
@@ -200,6 +210,7 @@ export function cutHeightBands(positions, heights, textured, T, opts = {}) {
     const cx = uy * wz - uz * wy, cy = uz * wx - ux * wz, cz = ux * wy - uy * wx;
     if (cx * cx + cy * cy + cz * cz < 1e-24) return;
     outPos.push(vx[a], vy[a], vz[a], vx[b], vy[b], vz[b], vx[c], vy[c], vz[c]);
+    if (vc) outCarry.push(vc[a], vc[b], vc[c]);
     outLab.push(label);
     outPar.push(parent);
   };
@@ -230,7 +241,7 @@ export function cutHeightBands(positions, heights, textured, T, opts = {}) {
         // Fan from a new centroid vertex: never collinear with any edge.
         const a = corner[t * 3], b = corner[t * 3 + 1], c = corner[t * 3 + 2];
         const m = addVertex((vx[a] + vx[b] + vx[c]) / 3, (vy[a] + vy[b] + vy[c]) / 3,
-          (vz[a] + vz[b] + vz[c]) / 3, 0);
+          (vz[a] + vz[b] + vz[c]) / 3, 0, vc ? (vc[a] + vc[b] + vc[c]) / 3 : 0);
         for (let i = 0; i < ring.length; i++) pushTri(m, ring[i], ring[(i + 1) % ring.length], 0, t);
       }
       continue;
@@ -264,6 +275,7 @@ export function cutHeightBands(positions, heights, textured, T, opts = {}) {
     positions: Float32Array.from(outPos),
     labels: Uint8Array.from(outLab),
     parent: Int32Array.from(outPar),
+    carried: vc ? Float32Array.from(outCarry) : null,
     cutEdges,
   };
 }

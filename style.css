@@ -359,6 +359,11 @@ main.sidebar-collapsed .rail-btn.active { background: none; border-color: transp
 }
 .export-buttons .export-btn.export-btn--secondary:hover:not(:disabled) { color: var(--text); border-color: var(--accent); background: var(--surface2); }
 .color-stl-note { margin-top: 10px; }
+/* Ornaments step */
+.orn-tools { margin-top: 10px; }
+.orn-border-box { margin-top: 6px; }
+.orn-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.orn-load { display: inline-block; }
 /* In-app confirm (main.js _confirmDialog) */
 .confirm-modal { max-width: 400px; }
 .confirm-text { font-size: 14px; line-height: 1.5; color: var(--text); }
@@ -2983,3 +2988,7 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
 /* ── Unfold: fit seams ───────────────────────────────────────────────── */
 .unfold-fit-btn { flex: 0 0 auto; width: auto; margin: 0; padding: 4px 12px; }
 .unfold-fit-info { flex: 1 1 auto; font-size: 11px; color: var(--text-muted); }
+
+/* Ornaments ▸ own color next to the filament select */
+.orn-color { margin-left: 6px; }
+.orn-hint { margin: 2px 0 6px; font-size: 11px; color: var(--text-muted, #9aa0aa); line-height: 1.35; }

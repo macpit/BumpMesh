@@ -4,7 +4,7 @@
  */
 
 import * as THREE from 'three';
-import { scaleMmToRelative, isStampActive, stampFrame, isRotateAroundZ, outlineWrapRepeats } from './mapping.js';
+import { scaleMmToRelative, isStampActive, stampFrame, ornamentThreshold, isRotateAroundZ, outlineWrapRepeats } from './mapping.js';
 
 // Mapping mode constants (must match index.html <option value="…">)
 export const MODE_PLANAR_XY   = 0;
@@ -67,6 +67,9 @@ const sharedGLSL = /* glsl */`
   uniform vec4      layerStamp[MAX_LAYERS];     // stamp: xyz = centre (model mm), w = facing side ±1; w = 0 → tiled
   uniform vec4      layerStampSize[MAX_LAYERS]; // stamp: xy = footprint (mm), zw = height map size (texels)
   uniform vec2      layerStampFade[MAX_LAYERS]; // stamp: x = Smooth Mask distance (mm), y = curve (FALLOFF_CURVE_INDEX)
+  uniform int       layerStampWrap[MAX_LAYERS]; // border: rows stacked in the band (≥ 1), 0 = plain stamp
+  uniform float     layerOrnThr[MAX_LAYERS];    // ornament color spread: cut level of the pattern value (mapping.js ornamentThreshold)
+  uniform int       layerOrnFil[MAX_LAYERS];    // ornament filament (1–4) of a stamp/border layer, 0 = none
   uniform vec4      layerStampDepth[MAX_LAYERS]; // stamp occlusion: x = has a depth map, y = texel (mm), zw = size (texels)
   uniform vec3      layerStampNormal[MAX_LAYERS]; // surface-normal stamp: projection normal
   uniform vec3      layerStampAxisU[MAX_LAYERS];  // … and its image right / up axes (mapping.js stampAxes)
@@ -198,9 +201,17 @@ const sharedGLSL = /* glsl */`
       if (side < 0.0) d.x = -d.x;
     }
     facing /= max(length(n), 1e-6);
-    float c = cos(layerRot[l]); float s = sin(layerRot[l]);
-    d = vec2(c * d.x - s * d.y, s * d.x + c * d.y);
-    return vec3(d / layerStampSize[l].xy + 0.5, facing);
+    vec2 uv;
+    if (layerStampWrap[l] >= 1) {
+      // Border: repeats around (the map texture wraps; no fract here, so the
+      // mip level stays smooth across the repeats), placed once in height.
+      uv = d / layerStampSize[l].xy + 0.5;
+    } else {
+      float c = cos(layerRot[l]); float s = sin(layerRot[l]);
+      d = vec2(c * d.x - s * d.y, s * d.x + c * d.y);
+      uv = d / layerStampSize[l].xy + 0.5;
+    }
+    return vec3(uv, facing);
   }
 
   // Stamp occlusion — mirrors _stampHeight / _stampOccluded in mapping.js.
@@ -242,12 +253,14 @@ const sharedGLSL = /* glsl */`
   float stampCover(int l, vec3 pos, vec3 n) {
     if (layerStamp[l].w == 0.0) return 1.0;
     vec3 f = stampFrame(l, pos, n);
-    if (f.x < 0.0 || f.x > 1.0 || f.y < 0.0 || f.y > 1.0) return 0.0;
+    bool wrapU = layerStampWrap[l] >= 1;
+    if ((!wrapU && (f.x < 0.0 || f.x > 1.0)) || f.y < 0.0 || f.y > 1.0) return 0.0;
     float cover = smoothstep(STAMP_FACING_LO, STAMP_FACING_HI, f.z);
     float fade = layerStampFade[l].x;
     if (fade > 0.0) {
       vec2 size = layerStampSize[l].xy;
-      float edge = min(min(f.x, 1.0 - f.x) * size.x, min(f.y, 1.0 - f.y) * size.y);
+      float edgeV = min(f.y, 1.0 - f.y) * size.y;
+      float edge = wrapU ? edgeV : min(min(f.x, 1.0 - f.x) * size.x, edgeV);
       float t = min(1.0, edge / fade);
       float curve = layerStampFade[l].y;
       if      (curve == 1.0) t = t * t * (3.0 - 2.0 * t);
@@ -284,7 +297,11 @@ const sharedGLSL = /* glsl */`
       // Clamp half a texel inside the image so the bilinear blend never
       // wraps the opposite border in (same as _stampGrey in displacement.js).
       vec2 halfTexel = 0.5 / layerStampSize[l].zw;
-      return sampleTex(l, clamp(stampFrame(l, pos, projN).xy, halfTexel, 1.0 - halfTexel));
+      vec2 suv = stampFrame(l, pos, projN).xy;
+      if (layerStampWrap[l] > 1) suv.y = fract(suv.y * float(layerStampWrap[l]));   // rows in the band
+      suv.y = clamp(suv.y, halfTexel.y, 1.0 - halfTexel.y);
+      if (layerStampWrap[l] == 0) suv.x = clamp(suv.x, halfTexel.x, 1.0 - halfTexel.x);   // a border wraps around
+      return sampleTex(l, suv);
     }
     int mappingMode = layerMode[l];
     float mappingBlend = layerBlend[l];
@@ -565,11 +582,18 @@ const fragmentShader = /* glsl */`
 
   // Fold layer l's screen-space height gradient (scaled by its amplitude and
   // weighted by wl) into the running bump sums with the over/add recurrence.
+  // Ornament filament under this fragment (Ornaments ▸ Filament), set by bumpLayer.
+  int ornPick = 0;
+
   void bumpLayer(int l, vec3 PN, float wl, inout float dhx, inout float dhy, inout float coverSum) {
     float hRaw = computeHeightAtPoint(l, vModelPos, PN, vModelNormal);
     // A stamp's coverage uses the attribute face normal: its orientation is
     // the mesh's, whereas PN's sign follows the screen-space derivatives.
     wl *= stampCover(l, vModelPos, vModelNormal);
+    // Ornament filament: where the pattern is more than half on, like the
+    // export's cut at 0.5; a later layer covering the spot hides it.
+    if (layerOrnFil[l] > 0) { if (hRaw * wl > layerOrnThr[l]) ornPick = layerOrnFil[l]; }
+    else if (layerAdd[l] == 0 && wl > 0.5) ornPick = 0;
     float gx = dFdx(hRaw) * layerAmp[l];
     float gy = dFdy(hRaw) * layerAmp[l];
     if (layerAdd[l] == 1) {
@@ -694,6 +718,7 @@ const fragmentShader = /* glsl */`
       }
       tealBase = swatchColor(band);
     }
+    if (ornPick > 0) tealBase = swatchColor(ornPick - 1);
     if (filamentPaintOn == 1 && vFilament > 0.5) tealBase = swatchColor(int(vFilament + 0.5) - 1);
     // Single layer: the familiar orange (painted out) and dark grey (angle
     // mask). Several layers: everything the active layer does not cover is a
@@ -833,6 +858,9 @@ export function updateMaterial(material, layers, settings) {
     u.layerStampSize.value[l * 4 + 1] = st ? st.sizeV : 1;
     u.layerStampSize.value[l * 4 + 2] = L ? Math.max(L.mapWidth ?? 1, 1) : 1;
     u.layerStampSize.value[l * 4 + 3] = L ? Math.max(L.mapHeight ?? 1, 1) : 1;
+    u.layerStampWrap.value[l]         = st && st.wrap ? st.repeatsV : 0;
+    u.layerOrnThr.value[l]            = L ? ornamentThreshold(L) : 0.5;
+    u.layerOrnFil.value[l]            = st && L.stampFilament > 0 ? Math.min(4, L.stampFilament | 0) : 0;
     u.layerStampFade.value[l * 2]     = st ? st.fade : 0;
     u.layerStampFade.value[l * 2 + 1] = st ? (FALLOFF_CURVE_INDEX[st.fadeCurve] ?? 0) : 0;
     const sd = st && L.stampDepth ? L.stampDepth : null;
@@ -902,6 +930,9 @@ function buildUniforms() {
     layerStamp:     { value: new Float32Array(MAX_LAYERS * 4) },
     layerStampSize: { value: new Float32Array(MAX_LAYERS * 4) },
     layerStampFade: { value: new Float32Array(MAX_LAYERS * 2) },
+    layerStampWrap: { value: new Int32Array(MAX_LAYERS) },
+    layerOrnFil: { value: new Int32Array(MAX_LAYERS) },
+    layerOrnThr: { value: new Float32Array(MAX_LAYERS).fill(0.5) },
     layerStampDepth: { value: new Float32Array(MAX_LAYERS * 4) },
     layerStampNormal: { value: new Float32Array(MAX_LAYERS * 3) },
     layerStampAxisU:  { value: new Float32Array(MAX_LAYERS * 3) },

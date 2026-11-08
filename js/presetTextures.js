@@ -208,6 +208,12 @@ async function unwrapIdeaMakerTexture(file) {
   return new File([bytes], name);
 }
 
+function _hasTransparency(imageData) {
+  const d = imageData.data;
+  for (let i = 3; i < d.length; i += 4 * 7) if (d[i] < 250) return true;
+  return false;
+}
+
 /**
  * Build a THREE.CanvasTexture + ImageData from a user-uploaded image File
  * (or an ideaMaker .texture file).
@@ -223,7 +229,11 @@ export async function loadCustomTexture(file) {
       // promise pending forever (e.g. a sizeless SVG decodes as 0×0 in Firefox).
       try {
         if (!img.naturalWidth || !img.naturalHeight) throw new Error('Image has no size');
-        const { w, h } = fitDimensions(img.width, img.height, CUSTOM_SIZE);
+        // SVG scales without loss: rasterise it at the full custom size
+        // instead of its (often small) nominal width/height.
+        const isSvg = /\.svg$/i.test(file.name) || file.type === 'image/svg+xml';
+        const scaleUp = isSvg ? CUSTOM_SIZE / Math.max(img.width, img.height) : 1;
+        const { w, h } = fitDimensions(Math.round(img.width * scaleUp), Math.round(img.height * scaleUp), CUSTOM_SIZE);
         const canvas = makeCanvas(w, h);
         const ctx    = canvas.getContext('2d');
         // The default 'low' quality is plain bilinear: on a big downscale
@@ -232,7 +242,16 @@ export async function loadCustomTexture(file) {
         // Presets keep the default — they were QA'd against it.
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, w, h);
-        const imageData = ctx.getImageData(0, 0, w, h);
+        let imageData = ctx.getImageData(0, 0, w, h);
+        // An SVG drawn on a transparent background (ornaments: shapes on
+        // nothing): its shapes are the relief, whatever their colour, so the
+        // coverage becomes the height. Opaque SVGs keep white = raised.
+        if (isSvg && _hasTransparency(imageData)) {
+          const d = imageData.data;
+          for (let i = 0; i < d.length; i += 4) { const a = d[i + 3]; d[i] = d[i + 1] = d[i + 2] = a; d[i + 3] = 255; }
+          ctx.putImageData(imageData, 0, 0);
+          imageData = ctx.getImageData(0, 0, w, h);
+        }
         const texture   = new THREE.CanvasTexture(canvas);
         texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
         texture.name = file.name;

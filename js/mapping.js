@@ -486,6 +486,17 @@ export const STAMP_FACING_LO = 0.15;
 export const STAMP_FACING_HI = 0.30;
 
 /** True when this layer's settings place the image once (surface normal, planar and cylindrical modes only). */
+/**
+ * Ornaments ▸ Color spread: the pattern value (grey × coverage, 0–1) above
+ * which the ornament takes its filament. 50 % spread cuts at mid grey; more
+ * spread reaches into fainter parts of the pattern.
+ */
+export function ornamentThreshold(settings) {
+  const p = Number(settings.stampColorSpread);
+  const spread = Number.isFinite(p) ? Math.max(2, Math.min(98, p)) : 50;
+  return 1 - spread / 100;
+}
+
 export function isStampActive(settings) {
   const mode = settings.mappingMode;
   return !!settings.stampOnce && ((mode >= MODE_PLANAR_XY && mode <= MODE_CYLINDRICAL) || mode === MODE_SURFACE_NORMAL);
@@ -544,12 +555,19 @@ export function stampFrame(settings, bounds) {
     const len = Math.hypot(settings.stampNormalX ?? 0, settings.stampNormalY ?? 0, settings.stampNormalZ ?? 0);
     if (len > 1e-9) { nx = settings.stampNormalX / len; ny = settings.stampNormalY / len; nz = settings.stampNormalZ / len; }
   }
-  const rotRad = (settings.rotation ?? 0) * Math.PI / 180;
+  // Border (stampWrap, cylindrical only): the image repeats a whole number
+  // of times around the axis and is placed once in height — a band.
+  const wrap = !!settings.stampWrap && mode === MODE_CYLINDRICAL;
+  const repeats = Math.max(1, Math.round(Number(settings.stampRepeats) || 8));
+  const repeatsV = wrap ? Math.max(1, Math.round(Number(settings.stampRepeatsV) || 1)) : 1;
+  const rotRad = wrap ? 0 : (settings.rotation ?? 0) * Math.PI / 180;
   return {
-    mode, cx, cy, cz, side, ccx, ccy, r,
+    mode, cx, cy, cz, side, ccx, ccy, r, wrap, repeats, repeatsV,
     nx, ny, nz, ...stampAxes(nx, ny, nz),
-    sizeU: Math.max(Number(settings.scaleU) || 1e-6, 1e-6) / (settings.textureAspectU ?? 1),
-    sizeV: Math.max(Number(settings.scaleV) || 1e-6, 1e-6) / (settings.textureAspectV ?? 1),
+    sizeU: wrap ? 2 * Math.PI * r / repeats
+      : Math.max(Number(settings.scaleU) || 1e-6, 1e-6) / (settings.textureAspectU ?? 1),
+    sizeV: wrap && Number(settings.stampBandWidth) > 0 ? Number(settings.stampBandWidth)
+      : Math.max(Number(settings.scaleV) || 1e-6, 1e-6) / (settings.textureAspectV ?? 1),
     cosR: Math.cos(rotRad), sinR: Math.sin(rotRad),
     // Smooth Mask: the layer's falloff distance (mm) and curve also fade the
     // stamp's own border.
@@ -577,23 +595,29 @@ export function stampUV(pos, normal, frame) {
   const facing = _stampFacing(normal.x, normal.y, normal.z, pos.x, pos.y, pos.z, frame);
   const ra = frame.cosR * ab.a - frame.sinR * ab.b;
   const rb = frame.sinR * ab.a + frame.cosR * ab.b;
-  const u = ra / frame.sizeU + 0.5;
+  let u = ra / frame.sizeU + 0.5;
   const v = rb / frame.sizeV + 0.5;
-  const inside = u >= 0 && u <= 1 && v >= 0 && v <= 1;
+  if (frame.wrap) u -= Math.floor(u);   // a border repeats around: only its height is bounded
+  const inside = (frame.wrap || (u >= 0 && u <= 1)) && v >= 0 && v <= 1;
   let cover = 0;
   if (inside) {
     const t = Math.max(0, Math.min(1, (facing - STAMP_FACING_LO) / (STAMP_FACING_HI - STAMP_FACING_LO)));
     cover = t * t * (3 - 2 * t);
     if (frame.fade > 0) {
       // Distance (mm) to the nearest footprint edge, in the stamp's own frame.
-      const edge = Math.min(Math.min(u, 1 - u) * frame.sizeU, Math.min(v, 1 - v) * frame.sizeV);
+      const edgeV = Math.min(v, 1 - v) * frame.sizeV;
+      const edge = frame.wrap ? edgeV : Math.min(Math.min(u, 1 - u) * frame.sizeU, edgeV);
       cover *= _falloffCurve(Math.min(1, edge / frame.fade), frame.fadeCurve);
     }
     // Only the surface nearest the stamp gets it, not the ones behind.
     if (cover > 0 && frame.depth
         && _stampOccluded(u, v, _stampHeight(pos.x, pos.y, pos.z, frame), facing, frame.depth)) cover = 0;
   }
-  return { u, v, cover };
+  // sv: where to sample the image in height — a border with several rows
+  // repeats it that many times across the band.
+  const n = frame.repeatsV || 1;
+  const sv = n > 1 ? v * n - Math.floor(v * n) : v;
+  return { u, v, sv, cover, wrap: !!frame.wrap };
 }
 
 const _ab = { a: 0, b: 0, dth: 0 };
@@ -727,6 +751,7 @@ function _stampTriTexels(tx, ty, nu, nv, visit, conservative = false) {
  * seam, which are never in front of the stamped side.
  */
 export function buildStampDepth(pos, frame, res = STAMP_DEPTH_RES) {
+  if (frame.wrap) return null;   // a border runs all around: no footprint to hide behind
   const triCount = pos.length / 9;
   const big = Math.max(frame.sizeU, frame.sizeV);
   const nu = Math.max(16, Math.round(res * frame.sizeU / big));
@@ -913,7 +938,7 @@ export function stampUntouchedFaces(pos, frame) {
       if (u < umin) umin = u; if (u > umax) umax = u;
       if (v < vmin) vmin = v; if (v > vmax) vmax = v;
     }
-    if (umax < -mu || umin > 1 + mu || vmax < -mv || vmin > 1 + mv) { out[t] = 1; continue; }
+    if ((!frame.wrap && (umax < -mu || umin > 1 + mu)) || vmax < -mv || vmin > 1 + mv) { out[t] = 1; continue; }
     if (depth) {
       // Hidden: every texel this face reaches holds a surface well in front of it.
       let minD = Infinity, any = false;

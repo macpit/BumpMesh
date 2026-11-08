@@ -4,7 +4,7 @@
  */
 
 import { THREE } from './threeCompat.js';
-import { computeUV, getDominantCubicAxis, getCubicBlendWeights, scaleMmToRelative, isStampActive, stampFrame, stampUV,
+import { computeUV, getDominantCubicAxis, getCubicBlendWeights, scaleMmToRelative, isStampActive, stampFrame, stampUV, ornamentThreshold,
          isRotateAroundZ, rotateSideFrame } from './mapping.js';
 import { QuantizedPointMap } from './meshIndex.js';
 
@@ -475,6 +475,11 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
   // up to the edge) and composited like any other position.
   const groupAcc = creases ? new Float64Array(creases.groupCount) : null;
 
+  // Ornament filaments (Ornaments ▸ Filament): per position the strongest
+  // ornament pattern (grey × coverage, 0..1) and its filament (1-based).
+  // Later layers that cover a position fade an ornament below them out.
+  let ornVal = null, ornFil = null;
+
   for (let li = 0; li < layers.length; li++) {
     const layer = layers[li];
     const lset = layer.settings;
@@ -624,9 +629,24 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
     const symmetric = !!lset.symmetricDisplacement;
     const amplitude = lset.amplitude;
     const blendAdd = !!layer.blendAdd;
+    const ornFilament = stamp && lset.stampFilament > 0 ? Math.min(4, lset.stampFilament | 0) : 0;
+    const ornThr = ornamentThreshold(lset);
+    if (ornFilament && !ornVal) { ornVal = new Float32Array(uniqueCount); ornFil = new Uint8Array(uniqueCount); }
     for (let vid = 0; vid < uniqueCount; vid++) {
       const grey = dispCacheVal[vid];
       const pinned = isPinned(vid);
+      if (ornVal) {
+        if (ornFilament) {
+          let v = pinned ? 0 : grey * dispCacheCov[vid] * (softMax ? 1 - softMax[vid] : 1);
+          // Color spread: this layer's cut level maps onto the export's cut at 0.5.
+          v = v < ornThr ? 0.5 * v / ornThr : 0.5 + 0.5 * (v - ornThr) / (1 - ornThr);
+          if (v > ornVal[vid]) { ornVal[vid] = v; ornFil[vid] = ornFilament; }
+        } else if (li > 0 && !blendAdd && !pinned) {
+          let cover = softMax ? 1 - softMax[vid] : 1;
+          if (dispCacheCov) cover *= dispCacheCov[vid];
+          ornVal[vid] *= 1 - cover;
+        }
+      }
       const mfTotal = maskedFracTotal[vid];
       const maskedFrac = mfTotal > 0 ? maskedFracMasked[vid] / mfTotal : 0;
       const centeredGrey = symmetric ? (grey - 0.5) : grey;
@@ -705,6 +725,7 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
   // same height — the contour cut relies on that to stay watertight. Only
   // allocated when asked for: 4 bytes per corner.
   const heightMm = settings.wantHeights ? new Float32Array(count) : null;
+  const ornCorner = ornVal ? new Float32Array(count) : null;
   const moves = creases ? _creaseMoves(creases, groupAcc, smoothNrmX, smoothNrmY, smoothNrmZ) : null;
   if (moves) _guardReleasedFolds(creases, moves, posAttr, vertexId, acc, smoothNrmX, smoothNrmY, smoothNrmZ);
 
@@ -715,6 +736,7 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
     const vid  = vertexId[i];
     const disp = acc[vid];
     if (heightMm) heightMm[i] = disp;
+    if (ornCorner) ornCorner[i] = ornVal[vid];
     const mfTotal = maskedFracTotal[vid];
     const maskedFrac = mfTotal > 0 ? maskedFracMasked[vid] / mfTotal : 0;
 
@@ -787,6 +809,20 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
   out.setAttribute('normal',   new THREE.BufferAttribute(newNrm, 3));
   out.userData.texturedFace = texturedFace;
   if (heightMm) out.userData.heightMm = heightMm;
+  if (ornCorner) {
+    // Per face the filament of its strongest ornament corner.
+    const triN = count / 3;
+    const faceFil = new Uint8Array(triN);
+    for (let t = 0; t < triN; t++) {
+      let best = -1, f = 0;
+      for (let k = 0; k < 3; k++) {
+        const v = ornCorner[t * 3 + k];
+        if (v > best) { best = v; f = ornFil[vertexId[t * 3 + k]]; }
+      }
+      faceFil[t] = f;
+    }
+    out.userData.ornament = { value: ornCorner, faceFilament: faceFil };
+  }
   return out;
 }
 
@@ -1179,8 +1215,8 @@ function _cubicGrey(data, w, h, pos, wX, wY, wZ, fx, fy, fz, bounds, md, relScal
 function _stampGrey(data, w, h, st) {
   const hu = 0.5 / w, hv = 0.5 / h;
   return sampleBilinear(data, w, h,
-    Math.min(Math.max(st.u, hu), 1 - hu),
-    Math.min(Math.max(st.v, hv), 1 - hv));
+    st.wrap ? st.u : Math.min(Math.max(st.u, hu), 1 - hu),   // a border wraps around
+    Math.min(Math.max(st.sv ?? st.v, hv), 1 - hv));
 }
 
 /**

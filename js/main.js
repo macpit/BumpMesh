@@ -214,6 +214,17 @@ const settings = {
   // along stampNormal (the surface normal at the centre; null = front).
   // See mapping.js stampFrame.
   stampOnce:    false,
+  // Ornaments ▸ Border: a cylindrical stamp that repeats stampRepeats times
+  // around the axis (mapping.js stampFrame).
+  stampWrap:    false,
+  stampRepeats: 12,
+  stampBandWidth: null,   // border width (mm); null = a fifth of the model height
+  // Ornaments: relief 'raised' | 'engraved' | 'flat' (flat = only its filament)
+  // and the ornament's own filament (1–4, 0 = none) in the 3MF.
+  stampRelief:  'raised',
+  stampFilament: 0,
+  stampRepeatsV: 1,       // Border: rows of the pattern stacked in the band
+  stampColorSpread: 50,   // Ornament filament: % of the pattern that takes it (cut at 1 − spread)
   stampCenterX: null,
   stampCenterY: null,
   stampCenterZ: null,
@@ -255,7 +266,7 @@ const LAYER_KEYS = [
   'boundaryFalloff', 'boundaryFalloffCurve',
   'snapSeamlessWrap', 'cylinderCenterX', 'cylinderCenterY', 'cylinderRadius',
   'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
-  'stampNormalX', 'stampNormalY', 'stampNormalZ',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread',
 ];
 let layers = [];        // layer records, composition order (first = bottom); see _newLayer
 let activeLayer = 0;    // index into `layers` of the layer the sidebar edits
@@ -397,6 +408,7 @@ function _setMeshInfo(triCount, mb, sx, sy, sz) {
   meshInfo.textContent = fileName ? `${fileName} · ${stats}` : stats;
   _syncScaleFields();
   _syncFilamentPaintUI();
+  _syncOrnamentUI();
 }
 
 // ── Model ▸ Scale ────────────────────────────────────────────────────────────
@@ -1835,14 +1847,16 @@ function wireEvents() {
   linkSlider(rotationSlider,  rotationVal,  v => { settings.rotation  = v; return Math.round(v); });
   linkSlider(amplitudeSlider, amplitudeVal, v => {
     settings.textureHeight = v;
-    settings.amplitude = (settings.invertDisplacement ? -1 : 1) * v;
+    settings.amplitude = _ornamentFlat() ? 0 : (settings.invertDisplacement ? -1 : 1) * v;
     checkAmplitudeWarning();
     return v.toFixed(2);
   });
   amplitudeVal.addEventListener('change', checkAmplitudeWarning);
   invertDisplacementCheckbox.addEventListener('change', () => {
     settings.invertDisplacement = invertDisplacementCheckbox.checked;
-    settings.amplitude = (settings.invertDisplacement ? -1 : 1) * settings.textureHeight;
+    settings.amplitude = _ornamentFlat() ? 0 : (settings.invertDisplacement ? -1 : 1) * settings.textureHeight;
+    if (settings.stampOnce && !_ornamentFlat()) settings.stampRelief = settings.invertDisplacement ? 'engraved' : 'raised';
+    _syncOrnamentUI();
     updatePreview();
   });
   linkSlider(boundaryFalloffSlider, boundaryFalloffVal, v => { settings.boundaryFalloff = v; _falloffDirty = true; return v.toFixed(1); });
@@ -2029,6 +2043,7 @@ function wireEvents() {
   });
 
   _wireFilamentPaint();
+  _wireOrnaments();
 
   // ── Tool rail: one step's settings at a time ──
   initToolRail({
@@ -3133,7 +3148,8 @@ function _previewLayers() {
       cylinderCenterX: s.cylinderCenterX, cylinderCenterY: s.cylinderCenterY, cylinderRadius: s.cylinderRadius,
       textureAspectU: tmax / Math.max(tw, 1), textureAspectV: tmax / Math.max(th, 1),
       blendAdd: index > 0 && L.blendAdd,
-      stampOnce: s.stampOnce, stampSide: s.stampSide,
+      stampOnce: s.stampOnce, stampSide: s.stampSide, stampWrap: s.stampWrap, stampRepeats: s.stampRepeats, stampBandWidth: s.stampBandWidth,
+      stampFilament: s.stampFilament, stampRepeatsV: s.stampRepeatsV, stampColorSpread: s.stampColorSpread,
       stampCenterX: s.stampCenterX, stampCenterY: s.stampCenterY, stampCenterZ: s.stampCenterZ,
       stampNormalX: s.stampNormalX, stampNormalY: s.stampNormalY, stampNormalZ: s.stampNormalZ,
       mapWidth: tw, mapHeight: th,
@@ -3528,6 +3544,234 @@ function updateStampUIVisibility() {
   seamBandWidthSlider.closest('.form-row').style.display = on ? 'none' : '';   // no projection seams on a stamp
   cylinderSnapRow.style.display = _isSeamlessWrapMode() ? '' : 'none';
   if (!on) _setStampWheelArmed(false);
+  _syncOrnamentUI();
+}
+
+// ── Ornaments ▸ Border ───────────────────────────────────────────────────────
+// A border is a cylindrical stamp that repeats a whole number of times around
+// the axis (settings.stampWrap, mapping.js stampFrame): placed once in
+// height (stampCenterZ, width stampBandWidth mm).
+
+function _borderWidthMm() {
+  const h = currentBounds ? currentBounds.size.z : 50;
+  return settings.stampBandWidth ?? Math.max(1, +(h / 5).toFixed(1));
+}
+
+/** Repeats so one repeat keeps the pattern's proportions at the current width and radius. */
+function _borderFitRepeats() {
+  if (!currentBounds) return 12;
+  const r = settings.cylinderRadius ?? Math.max(currentBounds.size.x, currentBounds.size.y) * 0.5;
+  const w = activeMapEntry?.width || 1, h = activeMapEntry?.height || 1;
+  const rowMm = _borderWidthMm() / Math.max(1, settings.stampRepeatsV || 1);
+  return Math.max(1, Math.round(2 * Math.PI * r / (rowMm * (w / h))));
+}
+
+function _setBorderMode(on) {
+  if (on) {
+    if (!currentGeometry) return;
+    settings.stampWrap = true;
+    settings.stampOnce = true;
+    if (settings.mappingMode !== 3) {
+      if (!STAMP_MODES.has(settings.mappingMode)) _modeBeforeStamp = settings.mappingMode;
+      mappingSelect.value = '3';
+      mappingSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    if (settings.stampBandWidth == null) settings.stampBandWidth = _borderWidthMm();
+    if (settings.stampCenterZ == null && currentBounds) {
+      settings.stampCenterX = null; settings.stampCenterY = null;   // front of the projection cylinder
+      settings.stampCenterZ = currentBounds.center.z;
+    }
+    if (!settings._borderRepeatsSet) settings.stampRepeats = _borderFitRepeats();
+    updateStampUIVisibility();
+    toggleStampPlace(false);
+    updatePreview();
+    _autoSaveSettings();
+  } else {
+    settings.stampWrap = false;
+    _setStampMode(false);
+  }
+}
+
+/** The active layer is an ornament drawn flat (only its filament, no relief). */
+function _ornamentFlat() {
+  return !!settings.stampOnce && settings.stampRelief === 'flat';
+}
+
+/** Some visible layer is an ornament with its own filament. */
+function _ornamentFilamentUsed() {
+  return layers.some((L, i) => {
+    const s = i === activeLayer ? settings : L.settings;
+    return L.visible && s.stampOnce && s.stampFilament > 0;
+  });
+}
+
+/** Ornaments ▸ Relief: raised / engraved through the layer's direction, flat = no height. */
+function _setOrnamentRelief(relief) {
+  settings.stampRelief = relief;
+  // Flat has no height: without a filament of its own it would not show at all.
+  if (relief === 'flat' && !(settings.stampFilament > 0)) settings.stampFilament = _freeFilamentSlot();
+  if (relief !== 'flat') {
+    settings.invertDisplacement = relief === 'engraved';
+    invertDisplacementCheckbox.checked = settings.invertDisplacement;
+  }
+  settings.amplitude = relief === 'flat' ? 0 : (settings.invertDisplacement ? -1 : 1) * settings.textureHeight;
+  _syncOrnamentUI();
+  updatePreview();
+  _autoSaveSettings();
+}
+
+function _syncOrnamentUI() {
+  const stampBtn = document.getElementById('orn-stamp-btn');
+  if (!stampBtn) return;
+  const any = !!settings.stampOnce;
+  document.getElementById('orn-common-box').hidden = !any;
+  if (any) {
+    for (const b of document.querySelectorAll('[data-orn-relief]')) {
+      const on = b.dataset.ornRelief === (settings.stampRelief || 'raised');
+      b.classList.toggle('active', on); b.setAttribute('aria-pressed', String(on));
+    }
+    const dr = document.getElementById('orn-depth'), dv = document.getElementById('orn-depth-val');
+    dr.disabled = dv.disabled = settings.stampRelief === 'flat';
+    if (document.activeElement !== dv) { dr.value = String(settings.textureHeight); dv.value = String(+(+settings.textureHeight).toFixed(2)); }
+    document.getElementById('orn-filament').value = String(settings.stampFilament || 0);
+    _syncOrnamentColor();
+  }
+  const border = !!settings.stampOnce && !!settings.stampWrap;
+  const stamp = !!settings.stampOnce && !settings.stampWrap;
+  const set = (el, on) => { el.classList.toggle('active', on); el.setAttribute('aria-pressed', String(on)); el.disabled = !currentGeometry; };
+  set(stampBtn, stamp);
+  set(document.getElementById('orn-border-btn'), border);
+  document.getElementById('orn-border-box').hidden = !border;
+  if (!border || !currentBounds) return;
+  const b = currentBounds;
+  const hr = document.getElementById('orn-height'), hv = document.getElementById('orn-height-val');
+  const wr = document.getElementById('orn-width'), wv = document.getElementById('orn-width-val');
+  const rr = document.getElementById('orn-repeats'), rv = document.getElementById('orn-repeats-val');
+  hr.max = String(+b.size.z.toFixed(1));
+  wr.max = String(+Math.max(1, b.size.z).toFixed(1));
+  const z = (settings.stampCenterZ ?? b.center.z) - b.min.z;
+  if (document.activeElement !== hv) { hr.value = String(z); hv.value = String(+z.toFixed(1)); }
+  const w = _borderWidthMm();
+  if (document.activeElement !== wv) { wr.value = String(w); wv.value = String(+w.toFixed(1)); }
+  if (document.activeElement !== rv) { rr.value = String(settings.stampRepeats); rv.value = String(settings.stampRepeats); }
+  const nv = settings.stampRepeatsV || 1;
+  const rvr = document.getElementById('orn-repeats-v'), rvv = document.getElementById('orn-repeats-v-val');
+  if (document.activeElement !== rvv) { rvr.value = String(nv); rvv.value = String(nv); }
+}
+
+/** Where filament k (1–4) is used besides the active ornament: i18n keys. */
+function _filamentUsers(k) {
+  const where = [];
+  const mode = settings.colorMode;
+  if (k === 1 && mode === 'off') where.push('orn.colorWhereModel');
+  else if ((mode === 'textured' && k <= 2) || (mode === 'height' && k <= settings.colorBands)) where.push('orn.colorWhereBands');
+  if (paintTree && currentGeometry) {
+    const slot = paintTree.layerSlot(FILAMENT_PAINT_IDS[k - 1]);
+    if (slot >= 0 && paintTree.hasPaint(slot)) where.push('orn.colorWherePaint');
+  }
+  if (layers.some((L, i) => i !== activeLayer && L.visible && L.settings.stampOnce && L.settings.stampFilament === k)) {
+    where.push('orn.colorWhereOrn');
+  }
+  return where;
+}
+
+/** First filament (2–4) nobody else uses; the last one when all are taken. */
+function _freeFilamentSlot() {
+  for (let k = 2; k <= 4; k++) if (_filamentUsers(k).length === 0) return k;
+  return 4;
+}
+
+/** Ornaments ▸ color swatch and the "also used by" note. */
+function _syncOrnamentColor() {
+  const k = settings.stampFilament || 0;
+  const sw = document.getElementById('orn-color');
+  const hint = document.getElementById('orn-color-hint');
+  if (!sw) return;
+  sw.value = k > 0 ? settings.filamentColors[k - 1] : '#888888';
+  sw.classList.toggle('unset', !k);
+  const where = k > 0 ? _filamentUsers(k) : [];
+  hint.hidden = !where.length;
+  if (where.length) hint.textContent = t('orn.colorShared', { n: k, where: where.map(w => t(w)).join(', ') });
+  const sr = document.getElementById('orn-spread'), svv = document.getElementById('orn-spread-val');
+  document.getElementById('orn-spread-row').hidden = !k;
+  if (document.activeElement !== svv) { sr.value = String(settings.stampColorSpread ?? 50); svv.value = String(settings.stampColorSpread ?? 50); }
+}
+
+function _wireOrnaments() {
+  document.getElementById('orn-stamp-btn').addEventListener('click', () => {
+    if (settings.stampOnce && !settings.stampWrap) { _setStampMode(false); return; }
+    settings.stampWrap = false;
+    if (settings.stampOnce) { updateStampUIVisibility(); toggleStampPlace(true); updatePreview(); _autoSaveSettings(); }
+    else _setStampMode(true);
+  });
+  document.getElementById('orn-border-btn').addEventListener('click', () => {
+    _setBorderMode(!(settings.stampOnce && settings.stampWrap));
+  });
+  const apply = () => { _syncOrnamentUI(); updatePreview(); _autoSaveSettings(); };
+  const pair = (rangeId, valId, set) => {
+    const r = document.getElementById(rangeId), v = document.getElementById(valId);
+    r.addEventListener('input', () => { set(parseFloat(r.value)); apply(); });
+    v.addEventListener('change', () => { set(parseFloat(v.value)); apply(); });
+  };
+  pair('orn-repeats', 'orn-repeats-val', (n) => {
+    if (!(n >= 1)) return;
+    settings.stampRepeats = Math.round(n);
+    settings._borderRepeatsSet = true;
+  });
+  pair('orn-height', 'orn-height-val', (h) => {
+    if (!currentBounds || !Number.isFinite(h)) return;
+    settings.stampCenterZ = currentBounds.min.z + Math.max(0, Math.min(currentBounds.size.z, h));
+  });
+  pair('orn-width', 'orn-width-val', (w) => {
+    if (!(w > 0)) return;
+    settings.stampBandWidth = w;
+  });
+  for (const b of document.querySelectorAll('[data-orn-relief]')) {
+    b.addEventListener('click', () => _setOrnamentRelief(b.dataset.ornRelief));
+  }
+  pair('orn-depth', 'orn-depth-val', (h) => {
+    if (!(h >= 0)) return;
+    // Same value as Height ▸ Texture height of this layer.
+    amplitudeSlider.value = String(h);
+    amplitudeSlider.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  document.getElementById('orn-filament').addEventListener('change', (e) => {
+    settings.stampFilament = parseInt(e.target.value, 10) || 0;
+    _syncOrnamentColor();
+    _renderFilamentColors();
+    _syncPreviewMaterial();
+    updatePreview();
+    _autoSaveSettings();
+  });
+  // Own color: the ornament's filament gets it (a free one first, if it has none).
+  document.getElementById('orn-color').addEventListener('input', (e) => {
+    if (!(settings.stampFilament > 0)) {
+      settings.stampFilament = _freeFilamentSlot();
+      document.getElementById('orn-filament').value = String(settings.stampFilament);
+      _renderFilamentColors();
+      updatePreview();
+    }
+    const k = settings.stampFilament - 1;
+    settings.filamentColors = settings.filamentColors.map((c, i) => (i === k ? e.target.value : c));
+    _syncOrnamentColor();
+    _syncPreviewMaterial();
+    _syncFilamentPaintUI();
+    _autoSaveSettings();
+  });
+  document.getElementById('orn-color').addEventListener('change', () => _renderFilamentColors());
+  pair('orn-spread', 'orn-spread-val', (p) => {
+    if (!Number.isFinite(p)) return;
+    settings.stampColorSpread = Math.max(2, Math.min(98, p));
+  });
+  pair('orn-repeats-v', 'orn-repeats-v-val', (n) => {
+    if (!(n >= 1)) return;
+    settings.stampRepeatsV = Math.round(n);
+  });
+  document.getElementById('orn-fit-btn').addEventListener('click', () => {
+    settings.stampRepeats = _borderFitRepeats();
+    apply();
+  });
+  _syncOrnamentUI();
 }
 
 /** While armed the hint lights up, so it's clear why the wheel resizes instead of zooming. */
@@ -3626,10 +3870,11 @@ function _stampDepthFor(i, frame) {
   const pa = currentGeometry.attributes.position;
   const res = _stampFastDepth ? STAMP_DEPTH_RES_FAST : STAMP_DEPTH_RES;
   const key = [currentGeometry.uuid, pa.version, pa.count, res, frame.mode, frame.side, frame.cx, frame.cy, frame.cz,
-    frame.nx, frame.ny, frame.nz, frame.sizeU, frame.sizeV, frame.cosR, frame.sinR, frame.ccx, frame.ccy, frame.r].join(',');
+    frame.nx, frame.ny, frame.nz, frame.sizeU, frame.sizeV, frame.cosR, frame.sinR, frame.ccx, frame.ccy, frame.r, frame.wrap ? 1 : 0].join(',');
   const cached = _stampDepthCache.get(L.id);
   if (cached && cached.key === key) return cached;
   const depth = buildStampDepth(pa.array, frame, res);
+  if (!depth) return null;   // border: no occlusion map
   const texture = new THREE.DataTexture(depth.data, depth.nu, depth.nv, THREE.RedFormat, THREE.FloatType);
   texture.minFilter = texture.magFilter = THREE.NearestFilter;
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
@@ -5632,7 +5877,7 @@ function _materialSettings(preview) {
     unfoldReady:      _ufReadyOn(_displayGeometry()),
     outlineWrapMean:  _owWrap ? _owWrap.meanLength : 1,
     // Filament colors of the 3MF export, shown on the model.
-    filamentColors: (settings.colorMode === 'off' && !_filamentPainted) ? null : {
+    filamentColors: (settings.colorMode === 'off' && !_filamentPainted && !_ornamentFilamentUsed()) ? null : {
       mode: settings.colorMode,
       paint: _filamentPainted,
       bands: settings.colorBands,
@@ -7126,7 +7371,7 @@ const PERSISTED_KEYS = [
   'cylinderPanelMinimized',
   // Stamp placement; the centre, side and normal are nullable like the cylinder axis.
   'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
-  'stampNormalX', 'stampNormalY', 'stampNormalZ',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread',
 ];
 
 // Settings that are NOT per layer (see LAYER_KEYS): resolution, triangle
@@ -7431,6 +7676,13 @@ function applySettingsSnapshot(snap) {
 
   // Stamp: snapshots from before the feature tile, like they always did.
   settings.stampOnce    = !!snap.stampOnce;
+  settings.stampWrap    = !!snap.stampWrap;
+  settings.stampRepeats = Math.max(1, Math.round(Number(snap.stampRepeats) || 12));
+  settings.stampBandWidth = snap.stampBandWidth ?? null;
+  settings.stampRelief  = ['raised', 'engraved', 'flat'].includes(snap.stampRelief) ? snap.stampRelief : 'raised';
+  settings.stampFilament = Math.max(0, Math.min(4, Math.round(Number(snap.stampFilament) || 0)));
+  settings.stampRepeatsV = Math.max(1, Math.round(Number(snap.stampRepeatsV) || 1));
+  settings.stampColorSpread = Math.max(2, Math.min(98, Number(snap.stampColorSpread) || 50));
   settings.stampCenterX = snap.stampCenterX ?? null;
   settings.stampCenterY = snap.stampCenterY ?? null;
   settings.stampCenterZ = snap.stampCenterZ ?? null;
@@ -7530,7 +7782,7 @@ const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   cylinderCenterX: null, cylinderCenterY: null, cylinderRadius: null,
   cylinderPanelMinimized: false,
   stampOnce: false, stampCenterX: null, stampCenterY: null, stampCenterZ: null, stampSide: null,
-  stampNormalX: null, stampNormalY: null, stampNormalZ: null,
+  stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampWrap: false, stampRepeats: 12, stampBandWidth: null, stampRelief: 'raised', stampFilament: 0, stampRepeatsV: 1, stampColorSpread: 50,
   activeMapName: DEFAULT_PRESET_NAME,
 });
 
