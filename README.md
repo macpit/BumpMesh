@@ -4,6 +4,10 @@
 >
 > **Try this fork:** **https://macpit.github.io/stlTexturizer/** (updated automatically on every push)
 
+![BumpMesh fork: tool rail on the left, bowl colored by height with three filaments, filament settings on the right](docs/screenshot-color-by-height.webp)
+
+*Color by height with three filaments, shown in the 3D preview the way the slicer will print it.*
+
 ## Why a fork?
 
 This fork adds multi-filament color painting to the 3MF export, new projection options and a reworked user interface. That is a lot of changes at once, close to a complete rework of the GUI, so it lives in its own repository where it can be tried as a whole.
