@@ -273,3 +273,21 @@ test('a stamp with a free frame over a border: no border colour under it, its ow
   assert.equal(r.repairStats.open, 0);
   assert.equal(r.repairStats.nonManifold, 0);
 });
+
+test('a flat ring covers only its annulus (and the free frame), not the image square', () => {
+  const st = { ...settings, mappingMode: 0, stampWrap: false, stampRing: true, rotation: 0, scaleU: 40, scaleV: 40,
+               stampCenterX: 0, stampCenterY: 0, stampCenterZ: 40, stampSide: 1,
+               stampRingInner: 0.5, stampRingOuter: 0.9, stampClearance: 1 };
+  const f = stampFrame(st, bounds);
+  assert.equal(f.ringIn, 0.5);
+  const up = { x: 0, y: 0, z: 1 };
+  const at = (x, y) => stampUV({ x, y, z: 10 }, up, f).cover;
+  assert.ok(at(14, 0) > 0, 'on the ring (radius 14 of 10…18 mm)');
+  assert.equal(at(5, 0), 0, 'in the hole the layers below stay');
+  assert.ok(at(9.5, 0) > 0, 'free frame inside the hole');
+  assert.ok(at(18.5, 0) > 0, 'free frame outside');
+  assert.equal(at(19.5, 0), 0, 'beyond the frame');
+  assert.equal(at(18, 18), 0, 'the image corner is not covered');
+  // A border, or a plain stamp, is no ring.
+  assert.equal(stampFrame({ ...st, stampRing: false }, bounds).ringIn, -1);
+});

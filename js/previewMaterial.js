@@ -68,6 +68,7 @@ const sharedGLSL = /* glsl */`
   uniform vec4      layerStampSize[MAX_LAYERS]; // stamp: xy = footprint (mm), zw = height map size (texels)
   uniform vec2      layerStampFade[MAX_LAYERS]; // stamp: x = Smooth Mask distance (mm), y = curve (FALLOFF_CURVE_INDEX)
   uniform int       layerStampWrap[MAX_LAYERS]; // border: rows stacked in the band (≥ 1), 0 = plain stamp
+  uniform vec2      layerStampRing[MAX_LAYERS];  // flat ring: inner, outer radius of the drawing / half the image (covers the annulus only); x −1 = not a ring
   uniform float     layerStampClear[MAX_LAYERS]; // stamp clearance frame around the image (mm, mapping.js stampFrame clear)
   uniform float     layerOrnThr[MAX_LAYERS];    // ornament color spread: cut level of the pattern value (mapping.js ornamentThreshold)
   uniform int       layerOrnFil[MAX_LAYERS];    // ornament filament (1–4) of a stamp/border layer, 0 = none
@@ -257,12 +258,21 @@ const sharedGLSL = /* glsl */`
     bool wrapU = layerStampWrap[l] >= 1;
     vec2 cl = layerStampClear[l] / layerStampSize[l].xy;
     if ((!wrapU && (f.x < -cl.x || f.x > 1.0 + cl.x)) || f.y < -cl.y || f.y > 1.0 + cl.y) return 0.0;
+    float ringEdge = 1e9;
+    if (layerStampRing[l].x >= 0.0) {
+      float R = 0.5 * layerStampSize[l].x;
+      float d = length((f.xy - 0.5) * layerStampSize[l].xy);
+      float rIn = layerStampRing[l].x * R - layerStampClear[l], rOut = layerStampRing[l].y * R + layerStampClear[l];
+      if (d > rOut || d < rIn) return 0.0;
+      ringEdge = min(rOut - d, rIn > 0.0 ? d - rIn : 1e9);
+    }
     float cover = smoothstep(STAMP_FACING_LO, STAMP_FACING_HI, f.z);
     float fade = layerStampFade[l].x;
     if (fade > 0.0) {
       vec2 size = layerStampSize[l].xy;
       float edgeV = (min(f.y, 1.0 - f.y) + cl.y) * size.y;
-      float edge = wrapU ? edgeV : min((min(f.x, 1.0 - f.x) + cl.x) * size.x, edgeV);
+      float edge = layerStampRing[l].x >= 0.0 ? ringEdge
+        : (wrapU ? edgeV : min((min(f.x, 1.0 - f.x) + cl.x) * size.x, edgeV));
       float t = min(1.0, edge / fade);
       float curve = layerStampFade[l].y;
       if      (curve == 1.0) t = t * t * (3.0 - 2.0 * t);
@@ -866,6 +876,8 @@ export function updateMaterial(material, layers, settings) {
     u.layerStampWrap.value[l]         = st && st.wrap ? st.repeatsV : 0;
     u.layerOrnThr.value[l]            = L ? ornamentThreshold(L) : 0.5;
     u.layerStampClear.value[l]        = st ? st.clear : 0;
+    u.layerStampRing.value[l * 2]     = st ? st.ringIn : -1;
+    u.layerStampRing.value[l * 2 + 1] = st ? st.ringOut : 1;
     u.layerOrnFil.value[l]            = st && L.stampFilament > 0 ? Math.min(4, L.stampFilament | 0) : 0;
     u.layerStampFade.value[l * 2]     = st ? st.fade : 0;
     u.layerStampFade.value[l * 2 + 1] = st ? (FALLOFF_CURVE_INDEX[st.fadeCurve] ?? 0) : 0;
@@ -940,6 +952,7 @@ function buildUniforms() {
     layerOrnFil: { value: new Int32Array(MAX_LAYERS) },
     layerOrnThr: { value: new Float32Array(MAX_LAYERS).fill(0.5) },
     layerStampClear: { value: new Float32Array(MAX_LAYERS) },
+    layerStampRing: { value: new Float32Array(MAX_LAYERS * 2).fill(-1) },
     layerStampDepth: { value: new Float32Array(MAX_LAYERS * 4) },
     layerStampNormal: { value: new Float32Array(MAX_LAYERS * 3) },
     layerStampAxisU:  { value: new Float32Array(MAX_LAYERS * 3) },

@@ -28,6 +28,7 @@ import { runExportPipeline }  from './exportPipeline.js';
 import { runPreviewPipeline, computeFaceNormals } from './previewPipeline.js';
 import { exportSTL, export3MF } from './exporter.js';
 import { growLines } from './lineGrow.js';
+import { detectRing, unwrapRing } from './ringUnwrap.js';
 import { bandThresholds, heightRangeMm, heightHistogram, bandShares, bandOf } from './colorBands.js';
 
 // Default contour heights (% of the texture height) for 2, 3 and 4 filament colors.
@@ -228,6 +229,8 @@ const settings = {
   stampColorSpread: 50,   // Ornament filament: % of the pattern that takes it (cut at 1 − spread)
   stampLineGrow: 0,       // Ornaments ▸ Thicker lines: mm added to the pattern's line width
   stampClearance: 0,      // Ornaments ▸ Free frame (mm) around a stamp: the layers below stop short of it
+  stampRing: false,       // Ornaments ▸ Ring: a round frame (ringUnwrap.js), placed by stampRingPlace
+  stampRingPlace: 'top',  // 'top' | 'bottom' (planar, centred on the axis) | 'wall' (rolled out as a border)
   stampCenterX: null,
   stampCenterY: null,
   stampCenterZ: null,
@@ -269,7 +272,7 @@ const LAYER_KEYS = [
   'boundaryFalloff', 'boundaryFalloffCurve',
   'snapSeamlessWrap', 'cylinderCenterX', 'cylinderCenterY', 'cylinderRadius',
   'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
-  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance', 'stampRing', 'stampRingPlace',
 ];
 let layers = [];        // layer records, composition order (first = bottom); see _newLayer
 let activeLayer = 0;    // index into `layers` of the layer the sidebar edits
@@ -644,6 +647,7 @@ let _ornListSig = '';
 const _ORN_ICONS = {
   stamp:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6v5l3 3H6l3-3z"/><path d="M5 14h14v3H5z"/><path d="M4 21h16"/></svg>',
   border: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M2 8h20M2 16h20"/><path d="M4 16v-6h5v4H6v-2M12 16v-6h5v4h-3v-2"/></svg>',
+  ring: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/></svg>',
   texture: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>',
 };
 
@@ -3143,8 +3147,8 @@ function _previewLayers() {
   for (const { index, isActive } of slots) {
     const L = layers[index];
     const s = isActive ? settings : L.settings;
-    const entry = _grownMapFor(index, isActive ? getEffectiveMapEntry()
-                           : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture));
+    const entry = _grownMapFor(index, _ringMapFor(index, isActive ? getEffectiveMapEntry()
+                           : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture)));
     const tw = entry?.width ?? 1, th = entry?.height ?? 1;
     const tmax = Math.max(tw, th, 1);
     if (isActive) activeIdx = list.length;
@@ -3162,6 +3166,7 @@ function _previewLayers() {
       blendAdd: index > 0 && L.blendAdd,
       stampOnce: s.stampOnce, stampSide: s.stampSide, stampWrap: s.stampWrap, stampRepeats: s.stampRepeats, stampBandWidth: s.stampBandWidth,
       stampFilament: s.stampFilament, stampRepeatsV: s.stampRepeatsV, stampColorSpread: s.stampColorSpread, stampClearance: s.stampClearance,
+      stampRing: s.stampRing, ..._ringRadiiFor(index, entry),
       stampCenterX: s.stampCenterX, stampCenterY: s.stampCenterY, stampCenterZ: s.stampCenterZ,
       stampNormalX: s.stampNormalX, stampNormalY: s.stampNormalY, stampNormalZ: s.stampNormalZ,
       mapWidth: tw, mapHeight: th,
@@ -3209,8 +3214,8 @@ function _pipelineInputs() {
     if (!L.visible) continue;
     const isActive = i === activeLayer;
     const s = isActive ? settings : L.settings;
-    const entry = _grownMapFor(i, isActive ? getEffectiveMapEntry()
-                           : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture));
+    const entry = _grownMapFor(i, _ringMapFor(i, isActive ? getEffectiveMapEntry()
+                           : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture)));
     if (!entry || !entry.imageData) continue;
     parts.push({ L, i, isActive, s, entry });
   }
@@ -3270,7 +3275,7 @@ function _pipelineInputs() {
     }
     out.push({
       imageData: entry.imageData, imgWidth: entry.width, imgHeight: entry.height,
-      settings: _owSettings({ ...settings, ...s }),
+      settings: _owSettings({ ...settings, ...s, ..._ringRadiiFor(i, entry) }),
       exclude, hardFaces: hardMasked,
       blendAdd: L !== layers[0] && L.blendAdd,
       stampDepth: frame ? frame.depth : null,
@@ -3616,6 +3621,7 @@ function _setBorderMode(on) {
 function _layerKind(i) {
   const s = i === activeLayer ? settings : layers[i].settings;
   if (!s.stampOnce) return 'texture';
+  if (s.stampRing) return 'ring';
   return s.stampWrap ? 'border' : 'stamp';
 }
 
@@ -3641,11 +3647,10 @@ function _renderOrnamentList() {
     return `${L.id}:${kinds[i]}:${entry?.name ?? ''}:${L.visible ? 1 : 0}:${s.stampFilament || 0}:${settings.filamentColors[(s.stampFilament || 1) - 1]}`;
   }).join('|') + `#${activeLayer}#${_ornCollapsed ? 1 : 0}#${getLang()}#${!!currentGeometry}`;
   const addOk = !!currentGeometry && layers.length < MAX_LAYERS;
-  for (const id of ['orn-add-stamp', 'orn-add-border']) {
+  for (const [id, key] of [['orn-add-stamp', 'orn.addStampTitle'], ['orn-add-border', 'orn.addBorderTitle'], ['orn-add-ring', 'orn.addRingTitle']]) {
     const b = document.getElementById(id);
     b.disabled = !addOk;
-    b.title = layers.length >= MAX_LAYERS ? t('orn.full', { n: MAX_LAYERS })
-      : t(id === 'orn-add-stamp' ? 'orn.addStampTitle' : 'orn.addBorderTitle');
+    b.title = layers.length >= MAX_LAYERS ? t('orn.full', { n: MAX_LAYERS }) : t(key);
   }
   if (sig === _ornListSig) return;
   _ornListSig = sig;
@@ -3736,7 +3741,7 @@ function _addOrnament(kind) {
   Object.assign(fresh.settings, {
     stampOnce: false, stampWrap: false, stampCenterX: null, stampCenterY: null, stampCenterZ: null,
     stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampFilament: 0, stampRelief: 'raised',
-    invertDisplacement: false, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0,
+    invertDisplacement: false, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0, stampRing: false, stampRingPlace: 'top',
     stampBandWidth: null, rotation: 0,
   });
   fresh.settings.amplitude = fresh.settings.textureHeight;
@@ -3752,8 +3757,10 @@ function _addOrnament(kind) {
   try {
     _materialiseActiveLayer();
     settings._borderRepeatsSet = false;
+    settings._ringSized = false;
     _ornCollapsed = false;
     if (kind === 'border') _setBorderMode(true);
+    else if (kind === 'ring') _setRingPlace('top');
     else _setStampMode(true);
   } finally { _undoApplyDepth--; }
   _refreshPaintGeometry();
@@ -3769,9 +3776,70 @@ function _removeOrnament(i) {
   if (layers.length > 1) { _removeLayer(i); _syncOrnamentUI(); return; }
   _flushUndoCapture();
   settings.stampWrap = false;
+  settings.stampRing = false;
   _setStampMode(false);
   _syncOrnamentUI();
   _commitUndoCapture();
+}
+
+/** Stamp size in mm, both directions (a ring keeps its round shape). */
+function _setStampSizeMm(d) {
+  _applyScaleU(d);
+  settings.scaleV = settings.scaleU;
+  scaleVSlider.value = scaleToPos(settings.scaleV);
+  scaleVVal.value = fmtScaleVal(settings.scaleV);
+}
+
+/** Band height that keeps a rolled-out ring's proportions at the projection radius. */
+function _ringFitWidth() {
+  if (!currentBounds) return 10;
+  const strip = _ringMapFor(activeLayer, getEffectiveMapEntry());
+  if (!strip || !strip.ring) return _borderWidthMm();
+  const r = settings.cylinderRadius ?? Math.max(currentBounds.size.x, currentBounds.size.y) * 0.5;
+  return Math.max(1, +(2 * Math.PI * r * strip.height / strip.width).toFixed(1));
+}
+
+/**
+ * Ornaments ▸ Ring: 'top' / 'bottom' project the round image flat along the
+ * axis, centred on it (Planar XY stamp); 'wall' rolls it out once around the
+ * wall (a border with one repeat of the unwrapped strip, _ringMapFor).
+ */
+function _setRingPlace(place) {
+  if (!currentGeometry || !currentBounds) return;
+  const b = currentBounds;
+  settings.stampOnce = true;
+  settings.stampRing = true;
+  settings.stampRingPlace = place;
+  const wantMode = place === 'wall' ? 3 : 0;
+  if (!STAMP_MODES.has(settings.mappingMode) && _modeBeforeStamp == null) _modeBeforeStamp = settings.mappingMode;
+  if (settings.mappingMode !== wantMode) {
+    mappingSelect.value = String(wantMode);
+    mappingSelect.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  if (place === 'wall') {
+    settings.stampWrap = true;
+    settings.stampRepeats = 1;
+    settings.stampRepeatsV = 1;
+    settings.stampCenterX = null; settings.stampCenterY = null;
+    if (settings.stampCenterZ == null || settings.stampCenterZ > b.max.z || settings.stampCenterZ < b.min.z) settings.stampCenterZ = b.center.z;
+    settings.stampBandWidth = _ringFitWidth();
+  } else {
+    settings.stampWrap = false;
+    settings.stampSide = place === 'top' ? 1 : -1;
+    settings.stampCenterX = settings.cylinderCenterX ?? b.center.x;
+    settings.stampCenterY = settings.cylinderCenterY ?? b.center.y;
+    settings.stampCenterZ = place === 'top' ? b.max.z : b.min.z;
+    settings.rotation = 0;
+    const fit = +(Math.min(b.size.x, b.size.y) * 0.8).toFixed(1);
+    const keep = settings._ringSized && settings.scaleU > 0 && settings.scaleU <= Math.max(b.size.x, b.size.y) * 1.5;
+    _setStampSizeMm(keep ? settings.scaleU : fit);
+    settings._ringSized = true;
+  }
+  updateStampUIVisibility();
+  toggleStampPlace(false);
+  _syncOrnamentUI();
+  updatePreview();
+  _autoSaveSettings();
 }
 
 /** The active layer is an ornament drawn flat (only its filament, no relief). */
@@ -3823,13 +3891,30 @@ function _syncOrnamentUI() {
     const cr = document.getElementById('orn-clear'), cv = document.getElementById('orn-clear-val');
     if (document.activeElement !== cv) { cr.value = String(settings.stampClearance || 0); cv.value = String(settings.stampClearance || 0); }
   }
-  const border = !!settings.stampOnce && !!settings.stampWrap;
-  const stamp = !!settings.stampOnce && !settings.stampWrap;
+  const ring = !!settings.stampOnce && !!settings.stampRing;
+  const band = !!settings.stampOnce && !!settings.stampWrap;   // a border, or a ring around the wall
+  const border = band && !ring;
+  const stamp = !!settings.stampOnce && !settings.stampWrap && !ring;
   const set = (el, on) => { el.classList.toggle('active', on); el.setAttribute('aria-pressed', String(on)); el.disabled = !currentGeometry; };
   set(stampBtn, stamp);
   set(document.getElementById('orn-border-btn'), border);
-  document.getElementById('orn-border-box').hidden = !border;
-  if (!border || !currentBounds) return;
+  set(document.getElementById('orn-ring-btn'), ring);
+  document.getElementById('orn-ring-box').hidden = !ring;
+  if (ring) {
+    for (const b of document.querySelectorAll('[data-ring-place]')) {
+      const on = b.dataset.ringPlace === settings.stampRingPlace;
+      b.classList.toggle('active', on); b.setAttribute('aria-pressed', String(on));
+    }
+    const flat = settings.stampRingPlace !== 'wall';
+    document.getElementById('orn-ring-dia-row').style.display = flat ? '' : 'none';   // .form-row is display:flex, hidden alone won't do
+    const dr = document.getElementById('orn-ring-dia'), dv = document.getElementById('orn-ring-dia-val');
+    if (currentBounds) dr.max = String(Math.ceil(Math.max(currentBounds.size.x, currentBounds.size.y) * 1.5));
+    if (document.activeElement !== dv) { dr.value = String(settings.scaleU); dv.value = String(+(+settings.scaleU).toFixed(1)); }
+  }
+  document.getElementById('orn-repeats-row').style.display = ring ? 'none' : '';
+  document.getElementById('orn-repeats-v-row').style.display = ring ? 'none' : '';
+  document.getElementById('orn-border-box').hidden = !band;
+  if (!band || !currentBounds) return;
   const b = currentBounds;
   const hr = document.getElementById('orn-height'), hv = document.getElementById('orn-height-val');
   const wr = document.getElementById('orn-width'), wv = document.getElementById('orn-width-val');
@@ -3880,21 +3965,31 @@ function _syncOrnamentColor() {
   hint.hidden = !where.length;
   if (where.length) hint.textContent = t('orn.colorShared', { n: k, where: where.map(w => t(w)).join(', ') });
   const sr = document.getElementById('orn-spread'), svv = document.getElementById('orn-spread-val');
-  document.getElementById('orn-spread-row').hidden = !k;
+  document.getElementById('orn-spread-row').style.display = k ? '' : 'none';
   if (document.activeElement !== svv) { sr.value = String(settings.stampColorSpread ?? 50); svv.value = String(settings.stampColorSpread ?? 50); }
 }
 
 function _wireOrnaments() {
   document.getElementById('orn-stamp-btn').addEventListener('click', () => {
-    if (settings.stampOnce && !settings.stampWrap) return;   // already a stamp; − removes it
+    if (settings.stampOnce && !settings.stampWrap && !settings.stampRing) return;   // already a stamp; − removes it
     settings.stampWrap = false;
+    settings.stampRing = false;
     if (settings.stampOnce) { updateStampUIVisibility(); toggleStampPlace(true); updatePreview(); _autoSaveSettings(); }
     else _setStampMode(true);
   });
   document.getElementById('orn-border-btn').addEventListener('click', () => {
-    if (settings.stampOnce && settings.stampWrap) return;
+    if (settings.stampOnce && settings.stampWrap && !settings.stampRing) return;
+    if (settings.stampRing) { settings.stampRing = false; settings._borderRepeatsSet = false; settings.stampBandWidth = null; }
     _setBorderMode(true);
   });
+  document.getElementById('orn-ring-btn').addEventListener('click', () => {
+    if (settings.stampOnce && settings.stampRing) return;
+    _setRingPlace(settings.stampRingPlace || 'top');
+  });
+  for (const b of document.querySelectorAll('[data-ring-place]')) {
+    b.addEventListener('click', () => _setRingPlace(b.dataset.ringPlace));
+  }
+  document.getElementById('orn-add-ring').addEventListener('click', () => _addOrnament('ring'));
   document.getElementById('orn-add-stamp').addEventListener('click', () => _addOrnament('stamp'));
   document.getElementById('orn-add-border').addEventListener('click', () => _addOrnament('border'));
   const apply = () => { _syncOrnamentUI(); updatePreview(); _autoSaveSettings(); };
@@ -3953,6 +4048,10 @@ function _wireOrnaments() {
     if (!Number.isFinite(p)) return;
     settings.stampColorSpread = Math.max(2, Math.min(98, p));
   });
+  pair('orn-ring-dia', 'orn-ring-dia-val', (d) => {
+    if (!(d > 0)) return;
+    _setStampSizeMm(d);
+  });
   pair('orn-clear', 'orn-clear-val', (mm) => {
     if (!(mm >= 0)) return;
     settings.stampClearance = mm;
@@ -3966,7 +4065,8 @@ function _wireOrnaments() {
     settings.stampRepeatsV = Math.round(n);
   });
   document.getElementById('orn-fit-btn').addEventListener('click', () => {
-    settings.stampRepeats = _borderFitRepeats();
+    if (settings.stampRing) settings.stampBandWidth = _ringFitWidth();
+    else settings.stampRepeats = _borderFitRepeats();
     apply();
   });
   _syncOrnamentUI();
@@ -5948,6 +6048,49 @@ function syncBoundaryEdgeUniforms() {
 // One cached result per source map, rebuilt when the radius in pixels changes.
 const _grownMapCache = new WeakMap();   // source imageData → { key, entry }
 
+// Ornaments ▸ Ring around the wall: the round image rolled out into a strip
+// (ringUnwrap.js), one per source map.
+const _ringMapCache = new WeakMap();   // source imageData → entry
+
+/**
+ * A flat ring's drawn radii as shares of half the image (stampRingInner /
+ * stampRingOuter for mapping.js stampFrame), detected once per map.
+ */
+const _ringRadiiCache = new WeakMap();
+function _ringRadiiFor(i, entry) {
+  const L = layers[i];
+  const s = L ? (i === activeLayer ? settings : L.settings) : null;
+  if (!s || !s.stampRing || s.stampRingPlace === 'wall' || !entry?.imageData) return {};
+  let r = _ringRadiiCache.get(entry.imageData);
+  if (!r) {
+    const ring = detectRing(entry.imageData.data, entry.width, entry.height);
+    const half = Math.min(entry.width, entry.height) / 2;
+    r = { stampRingInner: ring.rIn / half, stampRingOuter: ring.rOut / half };
+    _ringRadiiCache.set(entry.imageData, r);
+  }
+  return r;
+}
+
+function _ringMapFor(i, entry) {
+  const L = layers[i];
+  if (!entry || !entry.imageData || !L) return entry;
+  const s = i === activeLayer ? settings : L.settings;
+  if (!s.stampOnce || !s.stampRing || s.stampRingPlace !== 'wall') return entry;
+  const hit = _ringMapCache.get(entry.imageData);
+  if (hit) return hit;
+  const ring = detectRing(entry.imageData.data, entry.width, entry.height);
+  const strip = unwrapRing(entry.imageData.data, entry.width, entry.height, ring);
+  const imageData = new ImageData(strip.data, strip.width, strip.height);
+  const canvas = document.createElement('canvas');
+  canvas.width = strip.width; canvas.height = strip.height;
+  canvas.getContext('2d').putImageData(imageData, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  const out = { ...entry, imageData, width: strip.width, height: strip.height, texture, ring };
+  _ringMapCache.set(entry.imageData, out);
+  return out;
+}
+
 function _grownMapFor(i, entry) {
   const L = layers[i];
   if (!entry || !entry.imageData || !L) return entry;
@@ -7605,7 +7748,7 @@ const PERSISTED_KEYS = [
   'cylinderPanelMinimized',
   // Stamp placement; the centre, side and normal are nullable like the cylinder axis.
   'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
-  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance', 'stampRing', 'stampRingPlace',
 ];
 
 // Settings that are NOT per layer (see LAYER_KEYS): resolution, triangle
@@ -7919,6 +8062,8 @@ function applySettingsSnapshot(snap) {
   settings.stampColorSpread = Math.max(2, Math.min(98, Number(snap.stampColorSpread) || 50));
   settings.stampLineGrow = Math.max(0, Number(snap.stampLineGrow) || 0);
   settings.stampClearance = Math.max(0, Number(snap.stampClearance) || 0);
+  settings.stampRing = !!snap.stampRing;
+  settings.stampRingPlace = ['top', 'bottom', 'wall'].includes(snap.stampRingPlace) ? snap.stampRingPlace : 'top';
   settings.stampCenterX = snap.stampCenterX ?? null;
   settings.stampCenterY = snap.stampCenterY ?? null;
   settings.stampCenterZ = snap.stampCenterZ ?? null;
@@ -8018,7 +8163,7 @@ const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   cylinderCenterX: null, cylinderCenterY: null, cylinderRadius: null,
   cylinderPanelMinimized: false,
   stampOnce: false, stampCenterX: null, stampCenterY: null, stampCenterZ: null, stampSide: null,
-  stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampWrap: false, stampRepeats: 12, stampBandWidth: null, stampRelief: 'raised', stampFilament: 0, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0,
+  stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampWrap: false, stampRepeats: 12, stampBandWidth: null, stampRelief: 'raised', stampFilament: 0, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0, stampRing: false, stampRingPlace: 'top',
   activeMapName: DEFAULT_PRESET_NAME,
 });
 

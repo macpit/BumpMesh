@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
+<!-- Test ring for Ornaments ▸ Ring (drawn for this fork): black on transparent = raised -->
+<g fill="none" stroke="#000" stroke-width="7"><circle cx="200" cy="200" r="188"/><circle cx="200" cy="200" r="118"/></g>
+<g stroke="#000" stroke-width="4" fill="none"><circle cx="200" cy="200" r="174"/><circle cx="200" cy="200" r="132"/></g>
+<g transform="rotate(0.0 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="229.8" cy="49.9" r="5" fill="#000"/>
+<g transform="rotate(22.5 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="285.0" cy="72.8" r="5" fill="#000"/>
+<g transform="rotate(45.0 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="327.2" cy="115.0" r="5" fill="#000"/>
+<g transform="rotate(67.5 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="350.1" cy="170.2" r="5" fill="#000"/>
+<g transform="rotate(90.0 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="350.1" cy="229.8" r="5" fill="#000"/>
+<g transform="rotate(112.5 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="327.2" cy="285.0" r="5" fill="#000"/>
+<g transform="rotate(135.0 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="285.0" cy="327.2" r="5" fill="#000"/>
+<g transform="rotate(157.5 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="229.8" cy="350.1" r="5" fill="#000"/>
+<g transform="rotate(180.0 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="170.2" cy="350.1" r="5" fill="#000"/>
+<g transform="rotate(202.5 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="115.0" cy="327.2" r="5" fill="#000"/>
+<g transform="rotate(225.0 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="72.8" cy="285.0" r="5" fill="#000"/>
+<g transform="rotate(247.5 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="49.9" cy="229.8" r="5" fill="#000"/>
+<g transform="rotate(270.0 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="49.9" cy="170.2" r="5" fill="#000"/>
+<g transform="rotate(292.5 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="72.8" cy="115.0" r="5" fill="#000"/>
+<g transform="rotate(315.0 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="115.0" cy="72.8" r="5" fill="#000"/>
+<g transform="rotate(337.5 200 200)"><path d="M200 136 C214 146 214 164 200 170 C186 164 186 146 200 136 Z" fill="#000"/><circle cx="200" cy="153" r="3" fill="#fff"/></g>
+<circle cx="170.2" cy="49.9" r="5" fill="#000"/>
+</svg>

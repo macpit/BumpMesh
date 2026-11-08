@@ -491,6 +491,7 @@
         <div class="orn-add-row">
           <button type="button" id="orn-add-stamp" class="scale-reset-btn orn-add-btn" data-i18n-title="orn.addStampTitle" title="Add a stamp: a new layer above the others with the image once."><span aria-hidden="true">+</span> <span data-i18n="orn.stamp">Stamp</span></button>
           <button type="button" id="orn-add-border" class="scale-reset-btn orn-add-btn" data-i18n-title="orn.addBorderTitle" title="Add a border: a new layer above the others with the image repeating around the model."><span aria-hidden="true">+</span> <span data-i18n="orn.border">Border</span></button>
+          <button type="button" id="orn-add-ring" class="scale-reset-btn orn-add-btn" data-i18n-title="orn.addRingTitle" title="Add a ring: a round frame or medallion on a new layer, centred on the axis."><span aria-hidden="true">+</span> <span data-i18n="orn.ring">Ring</span></button>
         </div>
         <div id="orn-editor-home" hidden>
         <div id="orn-editor" class="orn-editor">
@@ -503,6 +504,25 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M2 8h20M2 16h20"/><path d="M4 16v-6h5v4H6v-2M12 16v-6h5v4h-3v-2"/></svg>
             <span data-i18n="orn.border">Border</span>
           </button>
+          <button type="button" id="orn-ring-btn" class="excl-tool-btn" aria-pressed="false" data-i18n-title="orn.ringTitle" title="Ring: a round frame or medallion, centred on the axis — from above or below on plates, lids and bowl bottoms, or rolled out around the wall.">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/></svg>
+            <span data-i18n="orn.ring">Ring</span>
+          </button>
+        </div>
+        <div id="orn-ring-box" class="orn-border-box" hidden>
+          <div class="form-row">
+            <span class="form-row-label" data-i18n="orn.ringPlace" data-i18n-title="orn.ringPlaceTitle" title="Where the ring goes: flat from above or below, centred on the axis, or rolled out around the wall (angle around, radius up: the outer edge on top).">Placement</span>
+            <div class="excl-seg" role="group">
+              <button type="button" class="excl-seg-btn" data-ring-place="top" data-i18n="orn.ringTop" data-i18n-title="orn.ringTopTitle" title="Projected from above, centred on the axis: plates, lids, the inside of a bowl.">From above</button>
+              <button type="button" class="excl-seg-btn" data-ring-place="bottom" data-i18n="orn.ringBottom" data-i18n-title="orn.ringBottomTitle" title="Projected from below, centred on the axis: the underside.">From below</button>
+              <button type="button" class="excl-seg-btn" data-ring-place="wall" data-i18n="orn.ringWall" data-i18n-title="orn.ringWallTitle" title="Rolled out around the wall once: the angle runs around, the radius up, the outer edge on top.">Around the wall</button>
+            </div>
+          </div>
+          <div class="form-row slider-row" id="orn-ring-dia-row">
+            <label for="orn-ring-dia" data-i18n="orn.ringDia" data-i18n-title="orn.ringDiaTitle" title="Outer diameter of the ring image on the model, in mm.">Diameter (mm)</label>
+            <input type="range" id="orn-ring-dia" min="5" max="300" step="0.5" value="80" />
+            <input type="number" class="val" id="orn-ring-dia-val" min="1" max="2000" step="0.5" value="80" />
+          </div>
         </div>
         <div class="form-row" id="stamp-mode-row" style="display:none">
           <div class="cylinder-axis-controls">
@@ -562,12 +582,12 @@
           </div>
         </div>
         <div id="orn-border-box" class="orn-border-box" hidden>
-          <div class="form-row slider-row">
+          <div class="form-row slider-row" id="orn-repeats-row">
             <label for="orn-repeats" data-i18n="orn.repeats" data-i18n-title="orn.repeatsTitle" title="How many times the pattern runs around. Whole numbers only, so the border closes without a seam.">Repeats around</label>
             <input type="range" id="orn-repeats" min="1" max="72" step="1" value="12" />
             <input type="number" class="val" id="orn-repeats-val" min="1" max="400" step="1" value="12" />
           </div>
-          <div class="form-row slider-row">
+          <div class="form-row slider-row" id="orn-repeats-v-row">
             <label for="orn-repeats-v" data-i18n="orn.repeatsV" data-i18n-title="orn.repeatsVTitle" title="How many rows of the pattern are stacked in the band, one above the other.">Rows</label>
             <input type="range" id="orn-repeats-v" min="1" max="12" step="1" value="1" />
             <input type="number" class="val" id="orn-repeats-v-val" min="1" max="100" step="1" value="1" />

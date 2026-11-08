@@ -573,6 +573,10 @@ export function stampFrame(settings, bounds) {
     // covers the layers below but adds nothing — the background pattern
     // stops short of the motif.
     clear: Math.max(Number(settings.stampClearance) || 0, 0),
+    // A ring placed flat covers only its annulus (inner radius as a share of
+    // the outer, from ringUnwrap.js detectRing), not the image's square.
+    ringIn: (!!settings.stampRing && !wrap) ? Math.max(0, Math.min(0.99, Number(settings.stampRingInner) || 0)) : -1,
+    ringOut: Math.max(0.01, Math.min(1, Number(settings.stampRingOuter) || 1)),
     // Smooth Mask: the layer's falloff distance (mm) and curve also fade the
     // stamp's own border.
     fade: Math.max(Number(settings.boundaryFalloff) || 0, 0),
@@ -603,7 +607,15 @@ export function stampUV(pos, normal, frame) {
   const v = rb / frame.sizeV + 0.5;
   if (frame.wrap) u -= Math.floor(u);   // a border repeats around: only its height is bounded
   const cu = (frame.clear || 0) / frame.sizeU, cv = (frame.clear || 0) / frame.sizeV;
-  const inside = (frame.wrap || (u >= -cu && u <= 1 + cu)) && v >= -cv && v <= 1 + cv;
+  let inside = (frame.wrap || (u >= -cu && u <= 1 + cu)) && v >= -cv && v <= 1 + cv;
+  let ringEdge = Infinity;   // mm to the nearest edge of a ring's covered annulus
+  if (frame.ringIn >= 0) {
+    const R = 0.5 * frame.sizeU, c = frame.clear || 0;
+    const d = Math.hypot((u - 0.5) * frame.sizeU, (v - 0.5) * frame.sizeV);
+    const rIn = frame.ringIn * R - c, rOut = frame.ringOut * R + c;
+    inside = d <= rOut && d >= rIn;
+    ringEdge = Math.min(rOut - d, rIn > 0 ? d - rIn : Infinity);
+  }
   let cover = 0;
   if (inside) {
     const t = Math.max(0, Math.min(1, (facing - STAMP_FACING_LO) / (STAMP_FACING_HI - STAMP_FACING_LO)));
@@ -611,7 +623,8 @@ export function stampUV(pos, normal, frame) {
     if (frame.fade > 0) {
       // Distance (mm) to the nearest footprint edge, in the stamp's own frame.
       const edgeV = (Math.min(v, 1 - v) + cv) * frame.sizeV;
-      const edge = frame.wrap ? edgeV : Math.min((Math.min(u, 1 - u) + cu) * frame.sizeU, edgeV);
+      const edge = frame.ringIn >= 0 ? ringEdge
+        : frame.wrap ? edgeV : Math.min((Math.min(u, 1 - u) + cu) * frame.sizeU, edgeV);
       cover *= _falloffCurve(Math.min(1, edge / frame.fade), frame.fadeCurve);
     }
     // Only the surface nearest the stamp gets it, not the ones behind.
