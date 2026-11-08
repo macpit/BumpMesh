@@ -2772,3 +2772,7 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* ── Unfold: fit seams ───────────────────────────────────────────────── */
+.unfold-fit-btn { flex: 0 0 auto; width: auto; margin: 0; padding: 4px 12px; }
+.unfold-fit-info { flex: 1 1 auto; font-size: 11px; color: var(--text-muted); }

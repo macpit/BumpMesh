@@ -84,10 +84,14 @@ const sharedGLSL = /* glsl */`
   uniform int       useDisplacement;
   uniform int       outlineWrapReady; // 1 = the mesh's outlineWrap attribute holds its places (outlineWrap.js)
   uniform float     outlineWrapMean;  // mean outline length (mm), the outline wrap's reference length
+  uniform int       unfoldReady;      // 1 = the mesh's unfoldUV attribute holds its unfolded coordinates (unfold.js)
 
   // Outline wrap: the current vertex's share of its outline and its rise, set
   // by each shader's main() from the outlineWrap attribute (or its varying).
   vec2 owPlace;
+  // Unfold: the point's coordinates (mm) on the unfolded surface, set the
+  // same way from the unfoldUV attribute / varying.
+  vec2 ufPlace;
 
   const float PI     = 3.14159265358979;
   const float TWO_PI = 6.28318530717959;
@@ -298,6 +302,11 @@ const sharedGLSL = /* glsl */`
     } else if (mappingMode == 2) {
       return sampleMap(l, vec2((pos.y - boundsMin.y) / md, (pos.z - boundsMin.z) / md));
 
+    } else if (mappingMode == 9 && unfoldReady == 1) {
+      // Unfold — mirrors computeUV in mapping.js: mm on the unfolded surface,
+      // reference length 1 mm (layerScale is the tile size in mm).
+      return sampleMap(l, ufPlace);
+
     } else if (mappingMode == 8 && outlineWrapReady == 1) {
       // Outline wrap — mirrors computeUV in mapping.js: n whole repeats of the
       // image around every height (one repeat spans layerScale/layerAspect in
@@ -438,8 +447,10 @@ const vertexShader = /* glsl */`
   attribute vec4  layerFalloff;   // per-layer boundary falloff (0 at a mask edge → 1 beyond the falloff distance)
   attribute float boundaryMaskTypeAttr;
   attribute vec2  outlineWrap;    // outline wrap: (share of the outline, rise) — outlineWrap.js
+  attribute vec2  unfoldUV;       // unfold: unfolded coordinates in mm — unfold.js
 
   varying vec2  vOutlineWrap;
+  varying vec2  vUnfoldUV;
   varying vec3  vModelPos;    // ORIGINAL model-space position → UV computation in fragment
   varying vec3  vModelNormal; // model-space face normal       → stable UV blending
   varying vec3  vViewPos;     // view-space position (possibly displaced) → TBN & specular
@@ -465,6 +476,8 @@ const vertexShader = /* glsl */`
     // the per-triangle unwrapped share.
     owPlace = vec2(fract(outlineWrap.x), outlineWrap.y);
     vOutlineWrap = outlineWrap;
+    ufPlace = unfoldUV;
+    vUnfoldUV = unfoldUV;
 
     // Surface angle masking — hard per-face cutoff using flat face normal
     float surfaceAngle = degrees(acos(clamp(abs(fN.z), 0.0, 1.0)));
@@ -531,6 +544,7 @@ const fragmentShader = /* glsl */`
   }
 
   varying vec2  vOutlineWrap;
+  varying vec2  vUnfoldUV;
   varying vec3  vModelPos;
   varying vec3  vModelNormal;
   varying vec3  vViewPos;
@@ -564,6 +578,7 @@ const fragmentShader = /* glsl */`
 
   void main() {
     owPlace = vOutlineWrap;
+    ufPlace = vUnfoldUV;
     // Flip normal for back faces so flipped-winding geometry still lights correctly.
     vec3 N = normalize(vNormal) * (gl_FrontFacing ? 1.0 : -1.0);
 
@@ -831,6 +846,7 @@ export function updateMaterial(material, layers, settings) {
   u.noDownwardZ.value      = settings.noDownwardZ      ? 1 : 0;
   u.useDisplacement.value  = settings.useDisplacement  ? 1 : 0;
   u.outlineWrapReady.value = settings.outlineWrapReady ? 1 : 0;
+  u.unfoldReady.value      = settings.unfoldReady ? 1 : 0;
   u.outlineWrapMean.value  = settings.outlineWrapMean  || 1.0;
   u.boundaryFalloffDist.value  = settings.boundaryFalloff ?? 0.0;
   u.boundaryFalloffCurve.value = FALLOFF_CURVE_INDEX[settings.boundaryFalloffCurve] ?? 0;
@@ -895,6 +911,7 @@ function buildUniforms() {
     noDownwardZ:      { value: 0 },
     useDisplacement:  { value: 0 },
     outlineWrapReady: { value: 0 },
+    unfoldReady:      { value: 0 },
     outlineWrapMean:  { value: 1.0 },
     boundaryEdgeTex:      { value: createFallbackDataTexture() },
     boundaryEdgeCount:    { value: 0 },

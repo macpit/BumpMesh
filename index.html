@@ -325,6 +325,7 @@
             <option value="6" data-i18n-opt="projection.cubic">Cubic (Box)</option>
             <option value="3" data-i18n-opt="projection.cylindrical">Cylindrical</option>
             <option value="8" data-i18n-opt="projection.outlineWrap">Outline wrap</option>
+            <option value="9" data-i18n-opt="projection.unfold">Unfold (flat faces)</option>
             <option value="4" data-i18n-opt="projection.spherical">Spherical</option>
             <option value="0" data-i18n-opt="projection.planarXY">Planar XY</option>
             <option value="1" data-i18n-opt="projection.planarXZ">Planar XZ</option>
@@ -471,6 +472,10 @@
             <input type="checkbox" id="rotate-around-z" />
             <span data-i18n="labels.rotateAroundZ">Rotate side faces around Z ⓘ</span>
           </label>
+        </div>
+        <div class="form-row hidden" id="unfold-fit-row">
+          <button id="unfold-fit-btn" class="smart-res-btn unfold-fit-btn" data-i18n="ui.unfoldFit" data-i18n-title="tooltips.unfoldFit" title="Unfold: adjust tile size and offset so the pattern meets itself at the seams. Measured with this texture along every seam.">Fit seams</button>
+          <span id="unfold-fit-info" class="unfold-fit-info"></span>
         </div>
       </section>
 

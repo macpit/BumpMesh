@@ -44,7 +44,8 @@ import { runFastDiagnostics, runExpensiveDiagnostics,
          getEdgePositions } from './meshValidation.js';
 import { t, tHtml, initLang, setLang, getLang, applyTranslations, TRANSLATIONS } from './i18n.js';
 import { getScaleReferenceLengths, isStampActive, stampFrame, stampUV, stampUntouchedFaces, buildStampDepth,
-         STAMP_DEPTH_RES, stampAxes, stampSurfaceAt, MODE_OUTLINE_WRAP } from './mapping.js';
+         STAMP_DEPTH_RES, stampAxes, stampSurfaceAt, MODE_OUTLINE_WRAP, MODE_UNFOLD } from './mapping.js';
+import { buildUnfold, unfoldPlaces, fitUnfoldTiling } from './unfold.js';
 import { buildOutlineWrap, outlineWrapPlaces } from './outlineWrap.js';
 import { QuantizedPointMap } from './meshIndex.js';
 import { APP_VERSION } from './version.js';
@@ -445,6 +446,9 @@ const capAngleSlider         = document.getElementById('cap-angle');
 const capAngleVal            = document.getElementById('cap-angle-val');
 const capAngleRow            = document.getElementById('cap-angle-row');
 const rotateAroundZRow       = document.getElementById('rotate-around-z-row');
+const unfoldFitRow           = document.getElementById('unfold-fit-row');
+const unfoldFitBtn           = document.getElementById('unfold-fit-btn');
+const unfoldFitInfo          = document.getElementById('unfold-fit-info');
 const rotateAroundZCheckbox  = document.getElementById('rotate-around-z');
 const cylinderSnapRow        = document.getElementById('cylinder-snap-row');
 const cylinderSnapToggle     = document.getElementById('cylinder-snap-toggle');
@@ -1803,6 +1807,8 @@ function wireEvents() {
     settings.preserveUntextured = preserveUntexturedChk.checked;
     // Export/bake-time flag only — no preview rebuild needed.
   });
+  unfoldFitBtn.addEventListener('click', () => { _fitUnfoldSeams(); });
+
   colorModeSel.addEventListener('change', () => {
     settings.colorMode = colorModeSel.value;
     _renderFilamentColors();
@@ -2880,6 +2886,7 @@ function _previewLayers() {
       boundaryFalloff: s.boundaryFalloff, boundaryFalloffCurve: s.boundaryFalloffCurve,
       stampDepth: _stampDepthFor(index, _stampFrameFor(index)),
       outlineWrap: _owReadyOn(_displayGeometry()) ? _owWrap : null,
+      unfold: _ufReadyOn(_displayGeometry()) ? _ufTab : null,
     });
   }
   return { list, activeIdx, count: slots.length };
@@ -5313,6 +5320,7 @@ function _materialSettings(preview) {
     layeredTint: preview.count > 1,
     // Outline wrap: the shader maps it as cylindrical until the mesh on screen has its places.
     outlineWrapReady: _owReadyOn(_displayGeometry()),
+    unfoldReady:      _ufReadyOn(_displayGeometry()),
     outlineWrapMean:  _owWrap ? _owWrap.meanLength : 1,
     // Filament colors of the 3MF export, shown on the model.
     filamentColors: settings.colorMode === 'off' ? null : {
@@ -5640,6 +5648,7 @@ function updatePreview() {
   // Ensure the per-layer mask attributes are current before rendering
   updateFaceMask(activeGeo);
   _syncOutlineWrap(activeGeo);
+  _syncUnfold(activeGeo);
 
   const preview = _previewLayers();
   if (!previewMaterial) {
@@ -5763,6 +5772,7 @@ async function toggleDisplacementPreview(enable) {
     setMeshMaterial(previewMaterial);
     // Its places (outline wrap) come from the worker; the redraw follows them.
     _syncOutlineWrap(dispPreviewGeometry);
+    _syncUnfold(dispPreviewGeometry);
   } catch (err) {
     if (dispPreviewToken !== myToken) return;
     console.error('Displacement preview failed:', err);
@@ -6227,7 +6237,94 @@ function _owReadyOn(geo) {
 
 /** `s` with the tables of the current mesh, for computeUV; as it is without them (it then maps as cylindrical). */
 function _owSettings(s) {
-  return _owWrap && _owKey === _owKeyOf(currentGeometry) ? { ...s, outlineWrap: _owWrap } : s;
+  let out = _owWrap && _owKey === _owKeyOf(currentGeometry) ? { ...s, outlineWrap: _owWrap } : s;
+  // Unfold: its tables ride along the same way (computeUV reads settings.unfold).
+  if (out.mappingMode === MODE_UNFOLD) {
+    const tab = _ufTables();
+    if (tab) out = { ...out, unfold: tab };
+  }
+  return out;
+}
+
+// ── Unfold (projection mode 9) ─────────────────────────────────────────────
+// The tables of the base mesh (unfold.js: flat regions folded out like a box
+// net), built on the main thread once a layer on screen uses the unfold, and
+// the per-corner unfolded coordinates of the mesh on screen (the preview's
+// `unfoldUV` attribute). Keyed like the outline wrap on the base geometry's
+// uuid and position version.
+let _ufKey = null;
+let _ufTab = null;
+
+function _ufUsed() {
+  return _layerSlots().some(({ index, isActive }) =>
+    (isActive ? settings : layers[index].settings).mappingMode === MODE_UNFOLD);
+}
+
+function _ufTables() {
+  const key = _owKeyOf(currentGeometry);
+  if (!key) return null;
+  if (_ufKey !== key) {
+    _ufKey = key;
+    _ufTab = null;
+    try {
+      _ufTab = buildUnfold(currentGeometry.attributes.position.array);
+    } catch (err) {
+      console.warn('[stlTexturizer] unfold failed, mapping as triplanar:', err.message);
+    }
+  }
+  return _ufTab;
+}
+
+/**
+ * "Fit seams": tile size (near the current one) and offset with the smallest
+ * height mismatch along the unfold's seams, measured with the active map.
+ * Applied through the inputs, so undo, the session and the preview follow.
+ */
+async function _fitUnfoldSeams() {
+  const tab = _ufTables();
+  const entry = getEffectiveMapEntry();
+  if (!tab || !entry || !entry.imageData) return;
+  unfoldFitBtn.disabled = true;
+  unfoldFitInfo.textContent = t('ui.unfoldFitBusy');
+  await yieldFrame();
+  try {
+    const tw = entry.width || 1, th = entry.height || 1, tmax = Math.max(tw, th, 1);
+    const fit = fitUnfoldTiling(tab, entry.imageData, {
+      scaleU: settings.scaleU, scaleV: settings.scaleV,
+      offsetU: settings.offsetU, offsetV: settings.offsetV, rotation: settings.rotation,
+      textureAspectU: tmax / tw, textureAspectV: tmax / th,
+    });
+    const set = (el, v) => { el.value = String(v); el.dispatchEvent(new Event('change', { bubbles: true })); };
+    set(scaleUVal, fit.scaleU);
+    if (!settings.lockScale) set(scaleVVal, fit.scaleV);
+    set(offsetUVal, fit.offsetU);
+    set(offsetVVal, fit.offsetV);
+    unfoldFitInfo.textContent = tab.seamEdges.length
+      ? t('ui.unfoldFitResult', { before: (fit.before * 100).toFixed(1), after: (fit.after * 100).toFixed(1) })
+      : t('ui.unfoldFitNoSeams');
+  } finally {
+    unfoldFitBtn.disabled = false;
+  }
+}
+
+/** Whether `geo` carries the unfolded coordinates of the current tables. */
+function _ufReadyOn(geo) {
+  return !!(_ufTab && geo && _ufKey === _owKeyOf(currentGeometry) && geo.userData.unfoldKey === _ufKey);
+}
+
+/** From updatePreview: put the unfolded coordinates on the mesh on screen. */
+function _syncUnfold(activeGeo) {
+  const show = settings.mappingMode === MODE_UNFOLD;
+  if (unfoldFitRow.classList.contains('hidden') === show) {
+    unfoldFitRow.classList.toggle('hidden', !show);
+    unfoldFitInfo.textContent = '';
+  }
+  if (!activeGeo || !_ufUsed()) return;
+  const tab = _ufTables();
+  if (!tab || activeGeo.userData.unfoldKey === _ufKey) return;
+  activeGeo.setAttribute('unfoldUV', new THREE.Float32BufferAttribute(
+    unfoldPlaces(tab, activeGeo.attributes.position.array), 2));
+  activeGeo.userData.unfoldKey = _ufKey;
 }
 
 function ensureOutlineWrapWorker() {

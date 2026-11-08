@@ -11,6 +11,7 @@
 
 import { QuantizedPointMap } from './meshIndex.js';
 import { outlineWrapCapWeight, outlineWrapPlace } from './outlineWrap.js';
+import { unfoldPlace } from './unfold.js';
 
 export const MODE_PLANAR_XY   = 0;
 export const MODE_PLANAR_XZ   = 1;
@@ -21,6 +22,7 @@ export const MODE_TRIPLANAR   = 5;
 export const MODE_CUBIC       = 6;
 export const MODE_SURFACE_NORMAL = 7;   // stamps only: along the surface normal at the stamp centre
 export const MODE_OUTLINE_WRAP = 8;     // along the part's outline around +Z (outlineWrap.js)
+export const MODE_UNFOLD       = 9;     // flat faces laid out like a box net (unfold.js)
 
 const TWO_PI = Math.PI * 2;
 
@@ -35,6 +37,8 @@ const TWO_PI = Math.PI * 2;
  *   cylindrical: circumference of the projection cylinder (U = arc length,
  *     V is normalized by the same C in computeUV)
  *   spherical: equator arc for U, pole-to-pole meridian arc for V
+ *   unfold: 1 mm — its coordinates are already mm on the unfolded surface
+ *     (settings.unfold, the tables of buildUnfold); without them triplanar
  *   outline wrap: the mean length of the outline around Z (settings.outlineWrap,
  *     the tables of buildOutlineWrap) for U and V; without the tables it maps
  *     as cylindrical, so it measures as cylindrical too
@@ -43,6 +47,9 @@ export function getScaleReferenceLengths(mode, settings, bounds) {
   const { size } = bounds;
   const md = Math.max(size.x, size.y, size.z, 1e-6);
   switch (mode) {
+    case MODE_UNFOLD:
+      if (settings.unfold) return { refU: 1, refV: 1 };
+      return { refU: md, refV: md };
     case MODE_OUTLINE_WRAP:
       if (settings.outlineWrap?.meanLength > 0) {
         const L = settings.outlineWrap.meanLength;
@@ -393,6 +400,16 @@ export function computeUV(pos, normal, mode, settings, bounds) {
         { u: side.u, v: side.v, w: 1 - capW },
         { u: cap.u, v: cap.v, w: capW },
       ] };
+    }
+
+    case MODE_UNFOLD: {
+      // Unfolded like a box net (unfold.js): mm along the surface, the
+      // texture continuous across every folded edge. Off the source surface
+      // or before the tables exist it maps as triplanar.
+      const p = settings.unfold
+        ? unfoldPlace(settings.unfold, pos.x, pos.y, pos.z, normal.x, normal.y, normal.z) : null;
+      if (p) return applyTransform(p.u, p.v, scaleU, scaleV, offsetU, offsetV, cosR, sinR);
+      return computeUV(pos, normal, MODE_TRIPLANAR, { ...settings, unfold: null }, bounds);
     }
 
     case MODE_TRIPLANAR:
