@@ -2900,7 +2900,12 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
 .color-result-btn {
   width: 100%;
   margin: 4px 0 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
 }
+.color-result-btn:hover:not(:disabled) { background: var(--surface2); border-color: var(--accent); color: var(--accent); }
+.color-result-slot:not(:empty) { margin-top: 10px; }
 .color-histogram {
   display: block;
   width: 100%;

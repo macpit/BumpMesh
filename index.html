@@ -754,6 +754,8 @@
         <div id="tri-limit-warning" class="tri-limit-warning hidden" data-i18n="warnings.safetyCapHit">
           ⚠ 16M-triangle safety cap hit during subdivision — result may still be coarser than requested edge length.
         </div>
+        <!-- Filled by _renderFilamentColors when filament colors are on -->
+        <div id="color-result-slot" class="color-result-slot"></div>
 
 
         <h3 class="panel-subsection-heading has-tip" data-i18n-title="ui.harvestFlatDesc" title="When decimation reaches the triangle limit there are often still flat faces left that cost almost nothing to remove. With this on, decimation keeps collapsing them past the limit — as long as each collapse moves the surface less than the tolerance below — saving extra triangles without losing visible detail." data-i18n="ui.harvestFlatHeading">Harvest Flat Faces</h3>

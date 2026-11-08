@@ -24,7 +24,7 @@ The list grows with every change; newest first within each group.
 - **Decimation keeps the color borders** — vertices on a border between two filaments stay where they are, so the triangle count still reaches the target without the colors bleeding.
 - **Thresholds and colors per band** — sliders for where each filament starts, swatches to match your actual filaments.
 - **Surface shares and height histogram** — how much of the surface each filament gets, estimated from the texture before exporting.
-- **Realistic preview** — the 3D preview colors the model by height the way the slicer will; "Show result" displays the exported, colored mesh itself.
+- **Realistic preview** — the 3D preview colors the model by height the way the slicer will; "Show export result" (in the Export step) displays the exported, colored mesh itself. Threshold sliders and color swatches update the preview live while you drag.
 
 ### Projection
 - **Unfold (flat faces)** — lays the texture over flat-faced parts like a box net, so the pattern runs continuously over folded edges instead of restarting on every face. Seams go where they are least visible (preferably bottom and side edges).

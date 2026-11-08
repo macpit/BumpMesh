@@ -5515,6 +5515,9 @@ function _renderFilamentColors() {
     }
     colorFilamentsBox.append(row);
   }
+  // The result view lives in the Export step: it shows what the export will write.
+  const resultSlot = document.getElementById('color-result-slot');
+  resultSlot.replaceChildren();
   if (mode !== 'off') {
     const btn = document.createElement('button');
     btn.id = 'color-result-btn';
@@ -5523,7 +5526,7 @@ function _renderFilamentColors() {
     btn.textContent = t(_colorResult ? 'ui.colorResultHide' : 'ui.colorResultShow');
     btn.title = t('tooltips.colorResult');
     btn.addEventListener('click', () => (_colorResult ? _clearColorResult() : _showColorResult()));
-    colorFilamentsBox.append(btn);
+    resultSlot.append(btn);
   }
   if (mode === 'height') {
     const hist = document.createElement('canvas');
@@ -5743,6 +5746,7 @@ function _syncPreviewMaterial() {
   const preview = _previewLayers();
   updateMaterial(previewMaterial, preview.list, _materialSettings(preview));
   _updateColorStats();
+  requestRender();   // the viewer draws on demand; uniform changes alone don't trigger a frame
 }
 
 function updatePreview() {
