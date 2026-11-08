@@ -2,7 +2,7 @@
 
 > **This is a fork of [BumpMesh by CNC Kitchen](https://github.com/CNCKitchen/stlTexturizer)** (original author: Stefan Hermann, live at [bumpmesh.com](https://bumpmesh.com)).
 >
-> **Try this fork:** **https://macpit.github.io/stlTexturizer/** (updated automatically on every push)
+> **Try this fork:** **https://macpit.github.io/BumpMesh/** (updated automatically on every push)
 >
 > If you like the fork, a ⭐ on GitHub is all I ask. To support the original author, use the [CNCKitchen.STORE](https://geni.us/CNCStoreTexture), [PayPal](https://www.paypal.me/CNCKitchen) or [Ko-fi](https://ko-fi.com/cnckitchen).
 
@@ -43,7 +43,7 @@ The list grows with every change; newest first within each group.
 - **Cleaner screen** — no support banner or footer links in the sidebar, no welcome popup on start (still under Info ▸ What's New), 3D Preview moved to the viewport footer, larger footer text.
 
 ### Hosting
-- **GitHub Pages** — every push publishes the app to https://macpit.github.io/stlTexturizer/. The imprint names this fork's operator, not CNC Kitchen.
+- **GitHub Pages** — every push publishes the app to https://macpit.github.io/BumpMesh/. The imprint names this fork's operator, not CNC Kitchen.
 
 ---
 

@@ -1,4 +1,4 @@
-# Publishes the app to GitHub Pages (https://macpit.github.io/stlTexturizer/)
+# Publishes the app to GitHub Pages (https://macpit.github.io/BumpMesh/)
 # on every push, so the most recently pushed branch is always online to try.
 # The upstream CNAME (bumpmesh.com) is left out: that domain belongs to the
 # original site, not to this fork.
