@@ -5,8 +5,8 @@
 
 // Left tool rail. Each icon is one step of the workflow (model, texture,
 // projection, height, mask, colors, export); the settings panel shows only the
-// sections tagged with that step's data-step. The export buttons sit in the
-// panel footer and stay visible on every step. Clicking the active step again
+// sections tagged with that step's data-step (the export buttons in the panel
+// footer belong to the Export step). Clicking the active step again
 // folds the panel away, like the collapse tab does.
 
 const STORAGE_KEY = 'stlt-active-step';

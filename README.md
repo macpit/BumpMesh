@@ -34,7 +34,7 @@ The list grows with every change; newest first within each group.
 - **Menu bar** — the BumpMesh logo opens *Info* (about, what's new, license, imprint, support links for the original author, source code, language and theme); *File* has load model (⌘/Ctrl+O), open/save project (⌘/Ctrl+S), reset to defaults and **recently used** files (kept in the browser, no upload).
 - **Tool rail** on the left: Model, Texture, Mapping, Height, Mask, Colors, Undo/Redo, Export. The settings panel shows only the chosen step instead of one long list.
 - **Advanced / Beta dissolved** — every option moved to the step where it acts; long explanations moved into ⓘ tooltips.
-- **Export 3MF first** — 3MF is the main export button (it carries the colors), STL stays available next to it; both are always visible at the bottom of the panel.
+- **Export 3MF first** — 3MF is the main export button (it carries the colors), STL stays available next to it; both sit at the bottom of the Export step.
 - **Scale** in the Model step, like the slicers: percent or size in mm per axis, uniform toggle, reset, and **drag handles in the 3D view** (corners scale uniformly, X/Y/Z handles per axis).
 - **Undo/redo for model edits** — scale, rotate and place on face can be undone like any setting.
 - **Cleaner screen** — no support banner or footer links in the sidebar, no welcome popup on start (still under Info ▸ What's New), 3D Preview moved to the viewport footer, larger footer text.
