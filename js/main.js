@@ -227,6 +227,7 @@ const settings = {
   stampRepeatsV: 1,       // Border: rows of the pattern stacked in the band
   stampColorSpread: 50,   // Ornament filament: % of the pattern that takes it (cut at 1 − spread)
   stampLineGrow: 0,       // Ornaments ▸ Thicker lines: mm added to the pattern's line width
+  stampClearance: 0,      // Ornaments ▸ Free frame (mm) around a stamp: the layers below stop short of it
   stampCenterX: null,
   stampCenterY: null,
   stampCenterZ: null,
@@ -268,7 +269,7 @@ const LAYER_KEYS = [
   'boundaryFalloff', 'boundaryFalloffCurve',
   'snapSeamlessWrap', 'cylinderCenterX', 'cylinderCenterY', 'cylinderRadius',
   'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
-  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance',
 ];
 let layers = [];        // layer records, composition order (first = bottom); see _newLayer
 let activeLayer = 0;    // index into `layers` of the layer the sidebar edits
@@ -638,6 +639,13 @@ const exclHint            = document.getElementById('excl-hint');
 const layerList   = document.getElementById('layer-list');
 const layerAddBtn = document.getElementById('layer-add-btn');
 let _layerStripSig = '';
+let _ornCollapsed = false;   // Ornaments list: the active card folded shut
+let _ornListSig = '';
+const _ORN_ICONS = {
+  stamp:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6v5l3 3H6l3-3z"/><path d="M5 14h14v3H5z"/><path d="M4 21h16"/></svg>',
+  border: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M2 8h20M2 16h20"/><path d="M4 16v-6h5v4H6v-2M12 16v-6h5v4h-3v-2"/></svg>',
+  texture: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>',
+};
 
 // ── Mesh diagnostics DOM refs ────────────────────────────────────────────────
 const meshDiagnostics    = document.getElementById('mesh-diagnostics');
@@ -3151,7 +3159,7 @@ function _previewLayers() {
       textureAspectU: tmax / Math.max(tw, 1), textureAspectV: tmax / Math.max(th, 1),
       blendAdd: index > 0 && L.blendAdd,
       stampOnce: s.stampOnce, stampSide: s.stampSide, stampWrap: s.stampWrap, stampRepeats: s.stampRepeats, stampBandWidth: s.stampBandWidth,
-      stampFilament: s.stampFilament, stampRepeatsV: s.stampRepeatsV, stampColorSpread: s.stampColorSpread,
+      stampFilament: s.stampFilament, stampRepeatsV: s.stampRepeatsV, stampColorSpread: s.stampColorSpread, stampClearance: s.stampClearance,
       stampCenterX: s.stampCenterX, stampCenterY: s.stampCenterY, stampCenterZ: s.stampCenterZ,
       stampNormalX: s.stampNormalX, stampNormalY: s.stampNormalY, stampNormalZ: s.stampNormalZ,
       mapWidth: tw, mapHeight: th,
@@ -3364,6 +3372,7 @@ function _renderLayerStrip() {
     });
     layerList.appendChild(row);
   });
+  _renderOrnamentList();
   if (layerAddBtn) {
     const full = layers.length >= MAX_LAYERS;
     layerAddBtn.disabled = full;
@@ -3594,6 +3603,175 @@ function _setBorderMode(on) {
   }
 }
 
+// ── Ornaments ▸ list ─────────────────────────────────────────────────────────
+// Every ornament is a layer of its own (stampOnce). The list shows the whole
+// layer stack top-down — the upper entry lies on top — with the ornaments as
+// cards: the active one opens with the editor (#orn-editor moved into it),
+// the others stay one line. Plain texture layers show as a slim row, so the
+// order relative to them is visible too.
+
+
+function _layerKind(i) {
+  const s = i === activeLayer ? settings : layers[i].settings;
+  if (!s.stampOnce) return 'texture';
+  return s.stampWrap ? 'border' : 'stamp';
+}
+
+function _ornIconBtn(cls, title, svg, onClick, disabled = false) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'layer-btn ' + cls;
+  b.title = title;
+  b.innerHTML = svg;
+  b.disabled = disabled;
+  b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+  return b;
+}
+
+function _renderOrnamentList() {
+  const list = document.getElementById('orn-list');
+  const editor = document.getElementById('orn-editor');
+  if (!list || !editor) return;
+  const kinds = layers.map((_, i) => _layerKind(i));
+  const sig = layers.map((L, i) => {
+    const s = i === activeLayer ? settings : L.settings;
+    const entry = i === activeLayer ? activeMapEntry : L.mapEntry;
+    return `${L.id}:${kinds[i]}:${entry?.name ?? ''}:${L.visible ? 1 : 0}:${s.stampFilament || 0}:${settings.filamentColors[(s.stampFilament || 1) - 1]}`;
+  }).join('|') + `#${activeLayer}#${_ornCollapsed ? 1 : 0}#${getLang()}#${!!currentGeometry}`;
+  const addOk = !!currentGeometry && layers.length < MAX_LAYERS;
+  for (const id of ['orn-add-stamp', 'orn-add-border']) {
+    const b = document.getElementById(id);
+    b.disabled = !addOk;
+    b.title = layers.length >= MAX_LAYERS ? t('orn.full', { n: MAX_LAYERS })
+      : t(id === 'orn-add-stamp' ? 'orn.addStampTitle' : 'orn.addBorderTitle');
+  }
+  if (sig === _ornListSig) return;
+  _ornListSig = sig;
+
+  document.getElementById('orn-editor-home').appendChild(editor);
+  list.replaceChildren();
+  const up = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>';
+  const down = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+  const del = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+  const anyOrn = kinds.some(k => k !== 'texture');
+  for (let i = layers.length - 1; i >= 0; i--) {   // top of the stack first
+    const L = layers[i];
+    const kind = kinds[i];
+    const isActive = i === activeLayer;
+    const s = isActive ? settings : L.settings;
+    const entry = isActive ? activeMapEntry : L.mapEntry;
+    const card = document.createElement('div');
+    card.className = `orn-card orn-${kind}` + (isActive ? ' active' : '') + (L.visible ? '' : ' hidden-layer');
+    card.setAttribute('role', 'listitem');
+    const head = document.createElement('div');
+    head.className = 'orn-card-head';
+    head.tabIndex = 0;
+    head.setAttribute('role', 'button');
+    const open = isActive && kind !== 'texture' && !_ornCollapsed;
+    if (kind !== 'texture') {
+      const chev = document.createElement('span');
+      chev.className = 'orn-chev' + (open ? ' open' : '');
+      chev.innerHTML = down;
+      head.appendChild(chev);
+    }
+    const icon = document.createElement('span');
+    icon.className = 'orn-card-icon';
+    icon.innerHTML = _ORN_ICONS[kind];
+    head.appendChild(icon);
+    const name = document.createElement('span');
+    name.className = 'orn-card-name';
+    name.textContent = `${i + 1} · ${t(kind === 'texture' ? 'orn.kindTexture' : 'orn.' + kind)}${entry?.name ? ' · ' + entry.name : ''}`;
+    head.appendChild(name);
+    if (kind !== 'texture' && s.stampFilament > 0) {
+      const dot = document.createElement('span');
+      dot.className = 'orn-card-dot';
+      dot.style.background = settings.filamentColors[s.stampFilament - 1];
+      dot.title = t('ui.filamentN', { n: s.stampFilament });
+      head.appendChild(dot);
+    }
+    head.appendChild(_ornIconBtn('orn-up', t('orn.moveUp'), up, () => _moveLayer(i, +1), i === layers.length - 1));
+    head.appendChild(_ornIconBtn('orn-down', t('orn.moveDown'), down, () => _moveLayer(i, -1), i === 0));
+    if (kind !== 'texture') {
+      head.appendChild(_ornIconBtn('orn-del', t('orn.remove'), del, () => _removeOrnament(i)));
+    }
+    const activate = () => {
+      if (!isActive) { _ornCollapsed = false; _activateLayer(i); _renderOrnamentList(); _syncOrnamentUI(); return; }
+      if (kind !== 'texture') { _ornCollapsed = !_ornCollapsed; _renderOrnamentList(); }
+    };
+    head.addEventListener('click', activate);
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
+    head.title = kind === 'texture' ? t('orn.textureRowTitle') : (isActive ? t('orn.collapseTitle') : t('orn.openTitle'));
+    card.appendChild(head);
+    if (open) card.appendChild(editor);
+    list.appendChild(card);
+  }
+  list.classList.toggle('only-textures', !anyOrn);
+}
+
+/** Swap layer i with its neighbour (dir +1 = up: drawn later, lies on top). */
+function _moveLayer(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= layers.length || i < 0 || i >= layers.length) return;
+  _flushUndoCapture();
+  [layers[i], layers[j]] = [layers[j], layers[i]];
+  if (activeLayer === i) activeLayer = j;
+  else if (activeLayer === j) activeLayer = i;
+  _falloffDirty = true;
+  _renderLayerStrip();
+  _renderOrnamentList();
+  updatePreview();
+  _autoSaveSettings();
+  _commitUndoCapture();
+}
+
+/** + Stamp / + Border: a new layer on top, covering everything, with fresh ornament settings. */
+function _addOrnament(kind) {
+  if (!currentGeometry || layers.length >= MAX_LAYERS) return;
+  _flushUndoCapture();
+  if (exclusionTool) setExclusionTool(null);
+  _storeActiveLayer();
+  const fresh = _newLayer({ includeOnly: false, maskModeChosen: false, blendAdd: false });
+  Object.assign(fresh.settings, {
+    stampOnce: false, stampWrap: false, stampCenterX: null, stampCenterY: null, stampCenterZ: null,
+    stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampFilament: 0, stampRelief: 'raised',
+    invertDisplacement: false, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0,
+    stampBandWidth: null, rotation: 0,
+  });
+  fresh.settings.amplitude = fresh.settings.textureHeight;
+  if (kind === 'stamp' && currentBounds) {
+    // A motif about a third of the model's height, not the size the layer below tiles at.
+    const mm = Math.max(1, +(Math.min(currentBounds.size.z, Math.max(currentBounds.size.x, currentBounds.size.y)) * 0.3).toFixed(1));
+    fresh.settings.scaleU = mm; fresh.settings.scaleV = mm;
+  }
+  layers.push(fresh);
+  activeLayer = layers.length - 1;
+  _syncTreeLayers();
+  _undoApplyDepth++;
+  try {
+    _materialiseActiveLayer();
+    settings._borderRepeatsSet = false;
+    _ornCollapsed = false;
+    if (kind === 'border') _setBorderMode(true);
+    else _setStampMode(true);
+  } finally { _undoApplyDepth--; }
+  _refreshPaintGeometry();
+  _renderLayerStrip();
+  _syncOrnamentUI();
+  updatePreview();
+  _autoSaveSettings();
+  _commitUndoCapture();
+}
+
+/** − on a card: the layer goes; the last remaining layer just stops being an ornament. */
+function _removeOrnament(i) {
+  if (layers.length > 1) { _removeLayer(i); _syncOrnamentUI(); return; }
+  _flushUndoCapture();
+  settings.stampWrap = false;
+  _setStampMode(false);
+  _syncOrnamentUI();
+  _commitUndoCapture();
+}
+
 /** The active layer is an ornament drawn flat (only its filament, no relief). */
 function _ornamentFlat() {
   return !!settings.stampOnce && settings.stampRelief === 'flat';
@@ -3625,6 +3803,7 @@ function _setOrnamentRelief(relief) {
 function _syncOrnamentUI() {
   const stampBtn = document.getElementById('orn-stamp-btn');
   if (!stampBtn) return;
+  _renderOrnamentList();
   const any = !!settings.stampOnce;
   document.getElementById('orn-common-box').hidden = !any;
   if (any) {
@@ -3639,6 +3818,8 @@ function _syncOrnamentUI() {
     _syncOrnamentColor();
     const gr = document.getElementById('orn-grow'), gv = document.getElementById('orn-grow-val');
     if (document.activeElement !== gv) { gr.value = String(settings.stampLineGrow || 0); gv.value = String(settings.stampLineGrow || 0); }
+    const cr = document.getElementById('orn-clear'), cv = document.getElementById('orn-clear-val');
+    if (document.activeElement !== cv) { cr.value = String(settings.stampClearance || 0); cv.value = String(settings.stampClearance || 0); }
   }
   const border = !!settings.stampOnce && !!settings.stampWrap;
   const stamp = !!settings.stampOnce && !settings.stampWrap;
@@ -3703,14 +3884,17 @@ function _syncOrnamentColor() {
 
 function _wireOrnaments() {
   document.getElementById('orn-stamp-btn').addEventListener('click', () => {
-    if (settings.stampOnce && !settings.stampWrap) { _setStampMode(false); return; }
+    if (settings.stampOnce && !settings.stampWrap) return;   // already a stamp; − removes it
     settings.stampWrap = false;
     if (settings.stampOnce) { updateStampUIVisibility(); toggleStampPlace(true); updatePreview(); _autoSaveSettings(); }
     else _setStampMode(true);
   });
   document.getElementById('orn-border-btn').addEventListener('click', () => {
-    _setBorderMode(!(settings.stampOnce && settings.stampWrap));
+    if (settings.stampOnce && settings.stampWrap) return;
+    _setBorderMode(true);
   });
+  document.getElementById('orn-add-stamp').addEventListener('click', () => _addOrnament('stamp'));
+  document.getElementById('orn-add-border').addEventListener('click', () => _addOrnament('border'));
   const apply = () => { _syncOrnamentUI(); updatePreview(); _autoSaveSettings(); };
   const pair = (rangeId, valId, set) => {
     const r = document.getElementById(rangeId), v = document.getElementById(valId);
@@ -3766,6 +3950,10 @@ function _wireOrnaments() {
   pair('orn-spread', 'orn-spread-val', (p) => {
     if (!Number.isFinite(p)) return;
     settings.stampColorSpread = Math.max(2, Math.min(98, p));
+  });
+  pair('orn-clear', 'orn-clear-val', (mm) => {
+    if (!(mm >= 0)) return;
+    settings.stampClearance = mm;
   });
   pair('orn-grow', 'orn-grow-val', (mm) => {
     if (!(mm >= 0)) return;
@@ -7415,7 +7603,7 @@ const PERSISTED_KEYS = [
   'cylinderPanelMinimized',
   // Stamp placement; the centre, side and normal are nullable like the cylinder axis.
   'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
-  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance',
 ];
 
 // Settings that are NOT per layer (see LAYER_KEYS): resolution, triangle
@@ -7728,6 +7916,7 @@ function applySettingsSnapshot(snap) {
   settings.stampRepeatsV = Math.max(1, Math.round(Number(snap.stampRepeatsV) || 1));
   settings.stampColorSpread = Math.max(2, Math.min(98, Number(snap.stampColorSpread) || 50));
   settings.stampLineGrow = Math.max(0, Number(snap.stampLineGrow) || 0);
+  settings.stampClearance = Math.max(0, Number(snap.stampClearance) || 0);
   settings.stampCenterX = snap.stampCenterX ?? null;
   settings.stampCenterY = snap.stampCenterY ?? null;
   settings.stampCenterZ = snap.stampCenterZ ?? null;
@@ -7827,7 +8016,7 @@ const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   cylinderCenterX: null, cylinderCenterY: null, cylinderRadius: null,
   cylinderPanelMinimized: false,
   stampOnce: false, stampCenterX: null, stampCenterY: null, stampCenterZ: null, stampSide: null,
-  stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampWrap: false, stampRepeats: 12, stampBandWidth: null, stampRelief: 'raised', stampFilament: 0, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0,
+  stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampWrap: false, stampRepeats: 12, stampBandWidth: null, stampRelief: 'raised', stampFilament: 0, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0,
   activeMapName: DEFAULT_PRESET_NAME,
 });
 

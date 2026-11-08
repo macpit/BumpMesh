@@ -637,6 +637,12 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
       const pinned = isPinned(vid);
       if (ornVal) {
         if (ornFilament) {
+          // Covering (not adding) hides the ornament colours of the layers below.
+          if (li > 0 && !blendAdd && !pinned) {
+            let cover = softMax ? 1 - softMax[vid] : 1;
+            if (dispCacheCov) cover *= dispCacheCov[vid];
+            ornVal[vid] *= 1 - cover;
+          }
           let v = pinned ? 0 : grey * dispCacheCov[vid] * (softMax ? 1 - softMax[vid] : 1);
           // Color spread: this layer's cut level maps onto the export's cut at 0.5.
           v = v < ornThr ? 0.5 * v / ornThr : 0.5 + 0.5 * (v - ornThr) / (1 - ornThr);
@@ -1213,6 +1219,7 @@ function _cubicGrey(data, w, h, pos, wX, wY, wZ, fx, fy, fz, bounds, md, relScal
  * opposite border in; the shader clamps the same way.
  */
 function _stampGrey(data, w, h, st) {
+  if (st.blank) return 0;   // clearance frame around the image
   const hu = 0.5 / w, hv = 0.5 / h;
   return sampleBilinear(data, w, h,
     st.wrap ? st.u : Math.min(Math.max(st.u, hu), 1 - hu),   // a border wraps around

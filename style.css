@@ -2992,3 +2992,23 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
 /* Ornaments ▸ own color next to the filament select */
 .orn-color { margin-left: 6px; }
 .orn-hint { margin: 2px 0 6px; font-size: 11px; color: var(--text-muted, #9aa0aa); line-height: 1.35; }
+
+/* Ornaments ▸ list of stamp / border cards (main.js _renderOrnamentList) */
+.orn-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.orn-card { border: 1px solid var(--border); border-radius: var(--radius); background: rgba(255,255,255,0.02); }
+.orn-card.active:not(.orn-texture) { border-color: var(--accent, #7c6cf0); }
+.orn-card.orn-texture { opacity: 0.6; border-style: dashed; }
+.orn-card.hidden-layer { opacity: 0.45; }
+.orn-card-head { display: flex; align-items: center; gap: 6px; padding: 5px 6px; cursor: pointer; min-height: 30px; }
+.orn-card-head:focus-visible { outline: 2px solid var(--accent, #7c6cf0); outline-offset: -2px; }
+.orn-chev { display: inline-flex; transition: transform 0.15s; transform: rotate(-90deg); opacity: 0.7; }
+.orn-chev.open { transform: rotate(0deg); }
+.orn-card-icon { display: inline-flex; width: 16px; height: 16px; flex: 0 0 16px; }
+.orn-card-icon svg { width: 16px; height: 16px; }
+.orn-card-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.orn-card-dot { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 12px; border: 1px solid rgba(255,255,255,0.25); }
+.orn-card .layer-btn:disabled { opacity: 0.25; cursor: default; }
+.orn-card .orn-editor { padding: 0 8px 8px; border-top: 1px solid var(--border); }
+.orn-add-row { display: flex; gap: 8px; margin-top: 8px; }
+.orn-add-btn { flex: 1 1 0; }
+.layer-btn.orn-del:hover { color: var(--danger); }

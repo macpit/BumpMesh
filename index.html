@@ -486,7 +486,14 @@
       <!-- Ornaments: a stamp (placed once) or a border (repeats around the axis) on the active texture layer -->
       <section class="panel-section" data-step="ornaments">
         <h2 data-i18n="orn.heading">Ornaments</h2>
-        <p class="advanced-blurb" data-i18n="orn.intro">Place a motif once, or run a border around the model. It uses the selected texture layer; add a layer under Texture to combine it with a tiled texture.</p>
+        <p class="advanced-blurb" data-i18n="orn.intro">Stamps (a motif once) and borders (a band around the model), each on its own layer. The upper one lies on top; the arrows change the order.</p>
+        <div id="orn-list" class="orn-list" role="list"></div>
+        <div class="orn-add-row">
+          <button type="button" id="orn-add-stamp" class="scale-reset-btn orn-add-btn" data-i18n-title="orn.addStampTitle" title="Add a stamp: a new layer above the others with the image once."><span aria-hidden="true">+</span> <span data-i18n="orn.stamp">Stamp</span></button>
+          <button type="button" id="orn-add-border" class="scale-reset-btn orn-add-btn" data-i18n-title="orn.addBorderTitle" title="Add a border: a new layer above the others with the image repeating around the model."><span aria-hidden="true">+</span> <span data-i18n="orn.border">Border</span></button>
+        </div>
+        <div id="orn-editor-home" hidden>
+        <div id="orn-editor" class="orn-editor">
         <div class="excl-tools orn-tools">
           <button type="button" id="orn-stamp-btn" class="excl-tool-btn" aria-pressed="false" data-i18n-title="orn.stampTitle" title="Stamp: the image once, for logos, badges and labels. Click the model to place it.">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6v5l3 3H6l3-3z"/><path d="M5 14h14v3H5z"/><path d="M4 21h16"/></svg>
@@ -528,6 +535,11 @@
             <label for="orn-depth" data-i18n="orn.depth" data-i18n-title="orn.depthTitle" title="Height of the ornament in mm, independent of other texture layers (the same value as Height ▸ Texture height of this layer).">Depth (mm)</label>
             <input type="range" id="orn-depth" min="0" max="2" step="0.01" value="0.5" />
             <input type="number" class="val" id="orn-depth-val" min="0" max="20" step="0.01" value="0.5" />
+          </div>
+          <div class="form-row slider-row">
+            <label for="orn-clear" data-i18n="orn.clear" data-i18n-title="orn.clearTitle" title="A free frame around the motif, in mm: the texture of the layers below stops this far from the image, so the ornament sits on a smooth surface. On a border: above and below the band.">Free frame (mm)</label>
+            <input type="range" id="orn-clear" min="0" max="20" step="0.1" value="0" />
+            <input type="number" class="val" id="orn-clear-val" min="0" max="200" step="0.1" value="0" />
           </div>
           <div class="form-row slider-row">
             <label for="orn-grow" data-i18n="orn.grow" data-i18n-title="orn.growTitle" title="Makes the lines of the pattern this much wider (mm, in total), for relief and color. For thin single-line SVGs: about one nozzle width makes them printable.">Thicker lines (mm)</label>
@@ -576,6 +588,8 @@
         </div>
         <div class="orn-foot">
           <label for="texture-file-input" class="scale-reset-btn orn-load" role="button" tabindex="0" data-i18n="orn.load" data-i18n-title="orn.loadTitle" title="Load an SVG (or image) as the pattern of this layer. SVG: one repeat per file, black shapes on transparent = raised.">Load pattern (SVG)…</label>
+        </div>
+        </div>
         </div>
       </section>
 

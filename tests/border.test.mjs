@@ -219,3 +219,57 @@ test('raised border with a filament plus color by height: both cuts run, mesh cl
   assert.equal(r.repairStats.open, 0);
   assert.equal(r.repairStats.nonManifold, 0);
 });
+
+// ── Stamp over a border: free frame and covering ────────────────────────────
+
+test('free frame: the stamp covers a frame around its image, the image adds nothing there', () => {
+  const st = { ...settings, stampWrap: false, rotation: 0, scaleU: 10, scaleV: 10, stampClearance: 3 };
+  const f = stampFrame(st, bounds);
+  assert.equal(f.clear, 3);
+  const n = { x: 0, y: -1, z: 0 };
+  const inImage = stampUV({ x: 0, y: -50, z: 20 }, n, f);
+  assert.ok(inImage.cover > 0 && !inImage.blank);
+  const inFrame = stampUV({ x: 0, y: -50, z: 26.5 }, n, f);   // 1.5 mm above the image
+  assert.ok(inFrame.cover > 0, 'frame still covers');
+  assert.equal(inFrame.blank, true, 'but adds nothing');
+  assert.equal(stampUV({ x: 0, y: -50, z: 28.5 }, n, f).cover, 0, 'beyond the frame');
+  assert.equal(stampUV({ x: 0, y: -50, z: 26.5 }, n, stampFrame({ ...st, stampClearance: 0 }, bounds)).cover, 0);
+});
+
+test('a stamp with a free frame over a border: no border colour under it, its own colour inside', async () => {
+  const img = halfImage();
+  const border = layerSettings({ stampFilament: 3 });
+  const stamp = layerSettings({ stampWrap: false, scaleU: 6, scaleV: 6, stampFilament: 4, stampClearance: 2 });
+  const r = await runExportPipeline({
+    positions: cylinder(), faceWeights: null, softExclude: null,
+    imageData: null, imgWidth: 0, imgHeight: 0,
+    layers: [
+      { imageData: img, imgWidth: img.width, imgHeight: img.height, settings: border, exclude: null, hardFaces: null, blendAdd: false, stampDepth: null },
+      { imageData: img, imgWidth: img.width, imgHeight: img.height, settings: stamp, exclude: null, hardFaces: null, blendAdd: false, stampDepth: null },
+    ],
+    settings: {
+      mappingMode: 3, refineLength: 0.8, maxTriangles: 40000, bottomAngleLimit: 0, topAngleLimit: 0,
+      smoothBottom: true, harvestFlatFaces: true, harvestTol: 0.005, regularizeEnabled: false,
+      preserveUntextured: false, colorMode: 'off', colorBands: 2, colorThresholds: [50],
+    },
+    bounds: cylBounds, regularizeOpts: {}, mode: 'export',
+  });
+  assert.ok(r.faceLabels);
+  const P = r.positions;
+  let fil3Under = 0, fil4 = 0, fil3Elsewhere = 0;
+  for (let t = 0; t < P.length / 9; t++) {
+    const b = t * 9;
+    const cx = (P[b] + P[b+3] + P[b+6]) / 3, cy = (P[b+1] + P[b+4] + P[b+7]) / 3, cz = (P[b+2] + P[b+5] + P[b+8]) / 3;
+    const front = cy < -15;
+    const arc = Math.atan2(cx, -cy) * 20;   // mm along the surface from the stamp centre
+    // The 64 × 32 image at 6 mm is 6 × 3 mm; with the 2 mm frame: ±5 mm around, ±3.5 mm up and down.
+    const underStamp = front && Math.abs(arc) < 4.7 && Math.abs(cz - 20) < 3.2;
+    if (r.faceLabels[t] === 3) fil4++;
+    if (r.faceLabels[t] === 2) { if (underStamp) fil3Under++; else fil3Elsewhere++; }
+  }
+  assert.ok(fil4 > 0, 'the stamp has its own filament');
+  assert.ok(fil3Elsewhere > 0, 'the border keeps its filament elsewhere');
+  assert.equal(fil3Under, 0, 'no border colour under the stamp and its frame');
+  assert.equal(r.repairStats.open, 0);
+  assert.equal(r.repairStats.nonManifold, 0);
+});

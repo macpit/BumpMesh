@@ -68,6 +68,7 @@ const sharedGLSL = /* glsl */`
   uniform vec4      layerStampSize[MAX_LAYERS]; // stamp: xy = footprint (mm), zw = height map size (texels)
   uniform vec2      layerStampFade[MAX_LAYERS]; // stamp: x = Smooth Mask distance (mm), y = curve (FALLOFF_CURVE_INDEX)
   uniform int       layerStampWrap[MAX_LAYERS]; // border: rows stacked in the band (≥ 1), 0 = plain stamp
+  uniform float     layerStampClear[MAX_LAYERS]; // stamp clearance frame around the image (mm, mapping.js stampFrame clear)
   uniform float     layerOrnThr[MAX_LAYERS];    // ornament color spread: cut level of the pattern value (mapping.js ornamentThreshold)
   uniform int       layerOrnFil[MAX_LAYERS];    // ornament filament (1–4) of a stamp/border layer, 0 = none
   uniform vec4      layerStampDepth[MAX_LAYERS]; // stamp occlusion: x = has a depth map, y = texel (mm), zw = size (texels)
@@ -254,13 +255,14 @@ const sharedGLSL = /* glsl */`
     if (layerStamp[l].w == 0.0) return 1.0;
     vec3 f = stampFrame(l, pos, n);
     bool wrapU = layerStampWrap[l] >= 1;
-    if ((!wrapU && (f.x < 0.0 || f.x > 1.0)) || f.y < 0.0 || f.y > 1.0) return 0.0;
+    vec2 cl = layerStampClear[l] / layerStampSize[l].xy;
+    if ((!wrapU && (f.x < -cl.x || f.x > 1.0 + cl.x)) || f.y < -cl.y || f.y > 1.0 + cl.y) return 0.0;
     float cover = smoothstep(STAMP_FACING_LO, STAMP_FACING_HI, f.z);
     float fade = layerStampFade[l].x;
     if (fade > 0.0) {
       vec2 size = layerStampSize[l].xy;
-      float edgeV = min(f.y, 1.0 - f.y) * size.y;
-      float edge = wrapU ? edgeV : min(min(f.x, 1.0 - f.x) * size.x, edgeV);
+      float edgeV = (min(f.y, 1.0 - f.y) + cl.y) * size.y;
+      float edge = wrapU ? edgeV : min((min(f.x, 1.0 - f.x) + cl.x) * size.x, edgeV);
       float t = min(1.0, edge / fade);
       float curve = layerStampFade[l].y;
       if      (curve == 1.0) t = t * t * (3.0 - 2.0 * t);
@@ -298,6 +300,8 @@ const sharedGLSL = /* glsl */`
       // wraps the opposite border in (same as _stampGrey in displacement.js).
       vec2 halfTexel = 0.5 / layerStampSize[l].zw;
       vec2 suv = stampFrame(l, pos, projN).xy;
+      // Clearance frame: the image adds nothing outside itself.
+      if (suv.y < 0.0 || suv.y > 1.0 || (layerStampWrap[l] == 0 && (suv.x < 0.0 || suv.x > 1.0))) return 0.0;
       if (layerStampWrap[l] > 1) suv.y = fract(suv.y * float(layerStampWrap[l]));   // rows in the band
       suv.y = clamp(suv.y, halfTexel.y, 1.0 - halfTexel.y);
       if (layerStampWrap[l] == 0) suv.x = clamp(suv.x, halfTexel.x, 1.0 - halfTexel.x);   // a border wraps around
@@ -592,8 +596,9 @@ const fragmentShader = /* glsl */`
     wl *= stampCover(l, vModelPos, vModelNormal);
     // Ornament filament: where the pattern is more than half on, like the
     // export's cut at 0.5; a later layer covering the spot hides it.
-    if (layerOrnFil[l] > 0) { if (hRaw * wl > layerOrnThr[l]) ornPick = layerOrnFil[l]; }
-    else if (layerAdd[l] == 0 && wl > 0.5) ornPick = 0;
+    // A covering layer hides the colours below it, also in its free frame.
+    if (layerAdd[l] == 0 && wl > 0.5) ornPick = 0;
+    if (layerOrnFil[l] > 0 && hRaw * wl > layerOrnThr[l]) ornPick = layerOrnFil[l];
     float gx = dFdx(hRaw) * layerAmp[l];
     float gy = dFdy(hRaw) * layerAmp[l];
     if (layerAdd[l] == 1) {
@@ -860,6 +865,7 @@ export function updateMaterial(material, layers, settings) {
     u.layerStampSize.value[l * 4 + 3] = L ? Math.max(L.mapHeight ?? 1, 1) : 1;
     u.layerStampWrap.value[l]         = st && st.wrap ? st.repeatsV : 0;
     u.layerOrnThr.value[l]            = L ? ornamentThreshold(L) : 0.5;
+    u.layerStampClear.value[l]        = st ? st.clear : 0;
     u.layerOrnFil.value[l]            = st && L.stampFilament > 0 ? Math.min(4, L.stampFilament | 0) : 0;
     u.layerStampFade.value[l * 2]     = st ? st.fade : 0;
     u.layerStampFade.value[l * 2 + 1] = st ? (FALLOFF_CURVE_INDEX[st.fadeCurve] ?? 0) : 0;
@@ -933,6 +939,7 @@ function buildUniforms() {
     layerStampWrap: { value: new Int32Array(MAX_LAYERS) },
     layerOrnFil: { value: new Int32Array(MAX_LAYERS) },
     layerOrnThr: { value: new Float32Array(MAX_LAYERS).fill(0.5) },
+    layerStampClear: { value: new Float32Array(MAX_LAYERS) },
     layerStampDepth: { value: new Float32Array(MAX_LAYERS * 4) },
     layerStampNormal: { value: new Float32Array(MAX_LAYERS * 3) },
     layerStampAxisU:  { value: new Float32Array(MAX_LAYERS * 3) },

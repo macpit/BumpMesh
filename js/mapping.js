@@ -569,6 +569,10 @@ export function stampFrame(settings, bounds) {
     sizeV: wrap && Number(settings.stampBandWidth) > 0 ? Number(settings.stampBandWidth)
       : Math.max(Number(settings.scaleV) || 1e-6, 1e-6) / (settings.textureAspectV ?? 1),
     cosR: Math.cos(rotRad), sinR: Math.sin(rotRad),
+    // Clearance (mm): a free frame around the image where the stamp still
+    // covers the layers below but adds nothing — the background pattern
+    // stops short of the motif.
+    clear: Math.max(Number(settings.stampClearance) || 0, 0),
     // Smooth Mask: the layer's falloff distance (mm) and curve also fade the
     // stamp's own border.
     fade: Math.max(Number(settings.boundaryFalloff) || 0, 0),
@@ -598,15 +602,16 @@ export function stampUV(pos, normal, frame) {
   let u = ra / frame.sizeU + 0.5;
   const v = rb / frame.sizeV + 0.5;
   if (frame.wrap) u -= Math.floor(u);   // a border repeats around: only its height is bounded
-  const inside = (frame.wrap || (u >= 0 && u <= 1)) && v >= 0 && v <= 1;
+  const cu = (frame.clear || 0) / frame.sizeU, cv = (frame.clear || 0) / frame.sizeV;
+  const inside = (frame.wrap || (u >= -cu && u <= 1 + cu)) && v >= -cv && v <= 1 + cv;
   let cover = 0;
   if (inside) {
     const t = Math.max(0, Math.min(1, (facing - STAMP_FACING_LO) / (STAMP_FACING_HI - STAMP_FACING_LO)));
     cover = t * t * (3 - 2 * t);
     if (frame.fade > 0) {
       // Distance (mm) to the nearest footprint edge, in the stamp's own frame.
-      const edgeV = Math.min(v, 1 - v) * frame.sizeV;
-      const edge = frame.wrap ? edgeV : Math.min(Math.min(u, 1 - u) * frame.sizeU, edgeV);
+      const edgeV = (Math.min(v, 1 - v) + cv) * frame.sizeV;
+      const edge = frame.wrap ? edgeV : Math.min((Math.min(u, 1 - u) + cu) * frame.sizeU, edgeV);
       cover *= _falloffCurve(Math.min(1, edge / frame.fade), frame.fadeCurve);
     }
     // Only the surface nearest the stamp gets it, not the ones behind.
@@ -617,7 +622,9 @@ export function stampUV(pos, normal, frame) {
   // repeats it that many times across the band.
   const n = frame.repeatsV || 1;
   const sv = n > 1 ? v * n - Math.floor(v * n) : v;
-  return { u, v, sv, cover, wrap: !!frame.wrap };
+  // In the clearance frame the image adds nothing (grey 0).
+  const blank = v < 0 || v > 1 || (!frame.wrap && (u < 0 || u > 1));
+  return { u, v, sv, cover, blank, wrap: !!frame.wrap };
 }
 
 const _ab = { a: 0, b: 0, dth: 0 };
@@ -882,7 +889,7 @@ export function stampUntouchedFaces(pos, frame) {
   const ab = { a: 0, b: 0, dth: 0 };
   const cr = frame.cosR, sr = frame.sinR;
   const margin = frame.fade * 1.25;
-  const mu = margin / frame.sizeU, mv = margin / frame.sizeV;
+  const mu = (margin + (frame.clear || 0)) / frame.sizeU, mv = (margin + (frame.clear || 0)) / frame.sizeV;
   const depth = frame.depth || null;
   const hiddenBy = depth ? Math.max(_stampDepthTolMax(depth), margin) : 0;
   const tx = new Float64Array(3), ty = new Float64Array(3);
