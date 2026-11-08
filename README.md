@@ -34,8 +34,32 @@ The list grows with every change; newest first within each group.
 - **Fit seams** — adjusts tile size and offset so the pattern meets itself at the remaining seams, measured with the actual texture.
 
 ### Ornaments
-- **Ornaments step** — stamps (a motif placed once, moved here from Mapping) and **borders**: the pattern repeats a whole number of times around the model as a band, like the friezes on a Greek vase. Repeats, height and width are adjustable; "Fit to pattern" keeps the pattern's proportions. Each ornament has its own **relief** (raised, engraved, or **flat** — no height, only colour, like painted on), its own **depth** independent of other texture layers, and optionally its **own filament** in the 3MF: the export cuts the mesh exactly along the pattern's edge, and it combines with color by height and painted filaments. A **color picker** next to it sets the ornament's color: it takes a free filament of its own (flat picks one automatically, since a flat ornament without one would be invisible) and warns if that filament is also used by Colors, painting or another ornament. **Color spread** sets how far the color reaches into the pattern (50 % = cut at mid grey). Borders can stack several **rows** of the pattern in the band. **Thicker lines** widens the pattern's lines by a set amount in mm (exact distance transform, for relief and colour alike), so thin single-line SVGs become printable. **Several ornaments** at once: "+ Stamp" / "+ Border" add each one as a layer of its own, shown as cards (fold open/shut, − removes, arrows change the stacking — the upper card lies on top; texture layers appear as slim rows so the order relative to them is visible). A covering ornament hides the colours of the layers below. **Free frame** (mm) keeps a smooth margin around a stamp (or above and below a border) where the background texture stops. **Rings** — round frames and medallions as a third ornament type: *from above* or *from below* they lie flat, centred on the axis (plates, lids, the inside of a bowl), covering only the ring itself so the texture continues inside the hole and around it; *around the wall* rolls the ring out once (angle around, radius up, outer edge on top) as a seamless band. Inner and outer radius are detected from the image (ringUnwrap.js). A self-drawn test ring is in ornaments/ring-test.svg.
-- **SVG patterns** — load an SVG as pattern (or as any texture): it is rasterised at full resolution, and on a transparent background the shapes are the relief whatever their colour. One repeat per file, seamless left to right.
+A new step in the tool rail for motifs that are placed, not tiled. Every ornament is a layer of its own.
+
+**Three kinds**
+- **Stamp** — a motif placed once (moved here from Mapping). Click the model to place it, scroll to resize.
+- **Border** — the pattern repeats a whole number of times around the model as a band, like the friezes on a Greek vase. Repeats, rows (several rows stacked in the band), height and width are adjustable; "Fit to pattern" keeps the pattern's proportions.
+- **Ring** — round frames and medallions. *From above* or *from below* they lie flat, centred on the axis (plates, lids, the inside of a bowl); *around the wall* rolls the ring out once (angle around, radius up, outer edge on top) as a seamless band. Inner and outer radius are detected from the image (`ringUnwrap.js`).
+
+**Several at once**
+- "+ Stamp", "+ Border" and "+ Ring" add each ornament as a layer of its own, shown as cards: click to fold open or shut, − removes, the arrows change the stacking.
+- The upper card lies on top. Texture layers appear as slim rows, so the order relative to them is visible too.
+- A covering ornament also hides the colours of the layers below it.
+
+**Relief and size**
+- **Relief:** raised, engraved, or **flat** (no height, only colour — like painted on).
+- **Depth** of its own, independent of the other texture layers.
+- **Thicker lines** (mm) widens the pattern's lines by an exact distance, for relief and colour alike, so thin single-line SVGs become printable.
+- **Free frame** (mm) keeps a smooth margin around a stamp (or above and below a border) where the background texture stops. A flat ring covers only the ring itself, so the texture continues inside its hole and around it.
+
+**Colour (3MF)**
+- **Own filament:** the export cuts the mesh exactly along the pattern's edge; it combines with color by height and painted filaments.
+- **Colour picker:** takes a free filament of its own (flat picks one automatically, since a flat ornament without one would be invisible) and warns if that filament is also used by Colors, painting or another ornament.
+- **Colour spread** sets how far the colour reaches into the pattern (50 % = cut at mid grey).
+
+**SVG patterns**
+- Load an SVG as pattern (or as any texture): it is rasterised at full resolution, and on a transparent background the shapes are the relief whatever their colour. One repeat per file, seamless left to right.
+- Test patterns drawn for this fork: `ornaments/maeander-test.svg` (border) and `ornaments/ring-test.svg` (ring).
 
 ### User interface
 - **Menu bar** — the BumpMesh logo opens *Info* (about, what's new, license, imprint, support links for the original author, source code, language and theme); *File* has load model (⌘/Ctrl+O), open/save project (⌘/Ctrl+S), reset to defaults and **recently used** files (kept in the browser, no upload).
