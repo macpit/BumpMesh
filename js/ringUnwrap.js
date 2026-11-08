@@ -54,9 +54,11 @@ export function detectRing(data, w, h) {
  * (counter-clockwise from +x, with the image's y axis pointing down),
  * row 0 the outer edge, the last row the inner edge. Width follows the
  * outer circumference (at most maxWidth), height the ring's thickness.
+ * With flip the strip is turned 180° (inner edge on top), for drawings
+ * whose motifs stand on the outer edge.
  * @returns {{data: Uint8ClampedArray, width: number, height: number}}
  */
-export function unwrapRing(data, w, h, ring, { maxWidth = 4096 } = {}) {
+export function unwrapRing(data, w, h, ring, { maxWidth = 4096, flip = false } = {}) {
   const { cx, cy, rIn, rOut } = ring;
   const width = Math.max(64, Math.min(maxWidth, Math.round(2 * Math.PI * rOut)));
   const scale = width / (2 * Math.PI * rOut);   // < 1 when capped: shrink the height alike
@@ -67,7 +69,8 @@ export function unwrapRing(data, w, h, ring, { maxWidth = 4096 } = {}) {
     for (let x = 0; x < width; x++) {
       const a = 2 * Math.PI * (x + 0.5) / width;
       const g = Math.round(255 * grey(data, w, h, cx + r * Math.cos(a), cy - r * Math.sin(a)));
-      const o = (y * width + x) * 4;
+      // flip: the strip turned 180° — inner edge on top, read the right way up.
+      const o = flip ? ((height - 1 - y) * width + (width - 1 - x)) * 4 : (y * width + x) * 4;
       out[o] = out[o + 1] = out[o + 2] = g;
       out[o + 3] = 255;
     }

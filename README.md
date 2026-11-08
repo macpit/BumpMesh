@@ -32,6 +32,7 @@ The list grows with every change; newest first within each group.
 ### Projection
 - **Unfold (flat faces)** — lays the texture over flat-faced parts like a box net, so the pattern runs continuously over folded edges instead of restarting on every face. Seams go where they are least visible (preferably bottom and side edges).
 - **Fit seams** — adjusts tile size and offset so the pattern meets itself at the remaining seams, measured with the actual texture.
+- **Rotate 90°** (Texture step, next to Invert texture) — turns the texture image itself a quarter turn per click (0°, 90°, 180°, 270°), for every projection and ornament; on a ring rolled out around the wall it moves where the ring starts.
 
 ### Ornaments
 A new step in the tool rail for motifs that are placed, not tiled. Every ornament is a layer of its own.
@@ -39,7 +40,7 @@ A new step in the tool rail for motifs that are placed, not tiled. Every ornamen
 **Three kinds**
 - **Stamp** — a motif placed once (moved here from Mapping). Click the model to place it, scroll to resize.
 - **Border** — the pattern repeats a whole number of times around the model as a band, like the friezes on a Greek vase. Repeats, rows (several rows stacked in the band), height and width are adjustable; "Fit to pattern" keeps the pattern's proportions.
-- **Ring** — round frames and medallions. *From above* or *from below* they lie flat, centred on the axis (plates, lids, the inside of a bowl); *around the wall* rolls the ring out once (angle around, radius up, outer edge on top) as a seamless band. Inner and outer radius are detected from the image (`ringUnwrap.js`).
+- **Ring** — round frames and medallions. *From above* or *from below* they lie flat, centred on the axis (plates, lids, the inside of a bowl); *around the wall* rolls the ring out once (angle around, radius up, outer edge on top) as a seamless band; **Turn over (180°)** puts the inner edge on top, so figures that stand on the ring's outer edge are upright on the wall. Inner and outer radius are detected from the image (`ringUnwrap.js`).
 
 **Several at once**
 - "+ Stamp", "+ Border" and "+ Ring" add each ornament as a layer of its own, shown as cards: click to fold open or shut, − removes, the arrows change the stacking.

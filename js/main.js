@@ -170,6 +170,7 @@ const settings = {
   seamBandWidth:    0.5,
   textureSmoothing: 0,
   invertTexture: false,
+  textureQuarter: 0,      // Texture ▸ Rotate 90°: quarter turns of the map itself (0–3)
   // Laplacian smoothing iterations applied to the per-vertex blend normal
   // (only the normal that drives projection-direction blend weights — not
   // the displacement direction). 0 = off, 4–8 = noticeable seam smoothing,
@@ -231,6 +232,7 @@ const settings = {
   stampClearance: 0,      // Ornaments ▸ Free frame (mm) around a stamp: the layers below stop short of it
   stampRing: false,       // Ornaments ▸ Ring: a round frame (ringUnwrap.js), placed by stampRingPlace
   stampRingPlace: 'top',  // 'top' | 'bottom' (planar, centred on the axis) | 'wall' (rolled out as a border)
+  stampRingFlip: false,   // Ring around the wall: band turned 180° (inner edge on top)
   stampCenterX: null,
   stampCenterY: null,
   stampCenterZ: null,
@@ -267,12 +269,12 @@ const settings = {
 const LAYER_KEYS = [
   'mappingMode', 'scaleU', 'scaleV', 'lockScale',
   'offsetU', 'offsetV', 'rotation', 'rotateAroundZ',
-  'amplitude', 'textureHeight', 'invertDisplacement', 'invertTexture', 'textureSmoothing',
+  'amplitude', 'textureHeight', 'invertDisplacement', 'invertTexture', 'textureQuarter', 'textureSmoothing',
   'symmetricDisplacement', 'mappingBlend', 'seamBandWidth', 'capAngle',
   'boundaryFalloff', 'boundaryFalloffCurve',
   'snapSeamlessWrap', 'cylinderCenterX', 'cylinderCenterY', 'cylinderRadius',
   'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
-  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance', 'stampRing', 'stampRingPlace',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance', 'stampRing', 'stampRingPlace', 'stampRingFlip',
 ];
 let layers = [];        // layer records, composition order (first = bottom); see _newLayer
 let activeLayer = 0;    // index into `layers` of the layer the sidebar edits
@@ -1912,6 +1914,12 @@ function wireEvents() {
     settings.invertTexture = invertTextureCheckbox.checked;
     updatePreview();
   });
+  document.getElementById('texture-rotate-btn').addEventListener('click', () => {
+    settings.textureQuarter = ((settings.textureQuarter || 0) + 1) % 4;
+    _syncTextureQuarter();
+    updatePreview();
+    _autoSaveSettings();
+  });
   rotateAroundZCheckbox.addEventListener('change', () => {
     settings.rotateAroundZ = rotateAroundZCheckbox.checked;
     updatePreview();
@@ -3148,7 +3156,7 @@ function _previewLayers() {
     const L = layers[index];
     const s = isActive ? settings : L.settings;
     const entry = _grownMapFor(index, _ringMapFor(index, isActive ? getEffectiveMapEntry()
-                           : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture)));
+                           : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture, s.textureQuarter)));
     const tw = entry?.width ?? 1, th = entry?.height ?? 1;
     const tmax = Math.max(tw, th, 1);
     if (isActive) activeIdx = list.length;
@@ -3215,7 +3223,7 @@ function _pipelineInputs() {
     const isActive = i === activeLayer;
     const s = isActive ? settings : L.settings;
     const entry = _grownMapFor(i, _ringMapFor(i, isActive ? getEffectiveMapEntry()
-                           : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture)));
+                           : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture, s.textureQuarter)));
     if (!entry || !entry.imageData) continue;
     parts.push({ L, i, isActive, s, entry });
   }
@@ -3741,7 +3749,7 @@ function _addOrnament(kind) {
   Object.assign(fresh.settings, {
     stampOnce: false, stampWrap: false, stampCenterX: null, stampCenterY: null, stampCenterZ: null,
     stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampFilament: 0, stampRelief: 'raised',
-    invertDisplacement: false, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0, stampRing: false, stampRingPlace: 'top',
+    invertDisplacement: false, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0, stampRing: false, stampRingPlace: 'top', stampRingFlip: false,
     stampBandWidth: null, rotation: 0,
   });
   fresh.settings.amplitude = fresh.settings.textureHeight;
@@ -3907,6 +3915,8 @@ function _syncOrnamentUI() {
     }
     const flat = settings.stampRingPlace !== 'wall';
     document.getElementById('orn-ring-dia-row').style.display = flat ? '' : 'none';   // .form-row is display:flex, hidden alone won't do
+    document.getElementById('orn-ring-flip-row').style.display = flat ? 'none' : '';
+    document.getElementById('orn-ring-flip').checked = !!settings.stampRingFlip;
     const dr = document.getElementById('orn-ring-dia'), dv = document.getElementById('orn-ring-dia-val');
     if (currentBounds) dr.max = String(Math.ceil(Math.max(currentBounds.size.x, currentBounds.size.y) * 1.5));
     if (document.activeElement !== dv) { dr.value = String(settings.scaleU); dv.value = String(+(+settings.scaleU).toFixed(1)); }
@@ -3990,6 +4000,11 @@ function _wireOrnaments() {
     b.addEventListener('click', () => _setRingPlace(b.dataset.ringPlace));
   }
   document.getElementById('orn-add-ring').addEventListener('click', () => _addOrnament('ring'));
+  document.getElementById('orn-ring-flip').addEventListener('change', (e) => {
+    settings.stampRingFlip = e.target.checked;
+    updatePreview();
+    _autoSaveSettings();
+  });
   document.getElementById('orn-add-stamp').addEventListener('click', () => _addOrnament('stamp'));
   document.getElementById('orn-add-border').addEventListener('click', () => _addOrnament('border'));
   const apply = () => { _syncOrnamentUI(); updatePreview(); _autoSaveSettings(); };
@@ -4134,7 +4149,7 @@ function _stampFrameFor(i) {
   const isActive = i === activeLayer;
   const s = isActive ? settings : L.settings;
   if (!isStampActive(s)) return null;
-  const entry = isActive ? getEffectiveMapEntry() : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture);
+  const entry = isActive ? getEffectiveMapEntry() : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture, s.textureQuarter);
   const tw = entry?.width ?? 1, th = entry?.height ?? 1;
   const tmax = Math.max(tw, th, 1);
   return stampFrame({ ...s, textureAspectU: tmax / Math.max(tw, 1), textureAspectV: tmax / Math.max(th, 1) }, currentBounds);
@@ -6050,7 +6065,7 @@ const _grownMapCache = new WeakMap();   // source imageData → { key, entry }
 
 // Ornaments ▸ Ring around the wall: the round image rolled out into a strip
 // (ringUnwrap.js), one per source map.
-const _ringMapCache = new WeakMap();   // source imageData → entry
+const _ringMapCache = new WeakMap();   // source imageData → { flip, entry }
 
 /**
  * A flat ring's drawn radii as shares of half the image (stampRingInner /
@@ -6076,10 +6091,11 @@ function _ringMapFor(i, entry) {
   if (!entry || !entry.imageData || !L) return entry;
   const s = i === activeLayer ? settings : L.settings;
   if (!s.stampOnce || !s.stampRing || s.stampRingPlace !== 'wall') return entry;
+  const flip = !!s.stampRingFlip;
   const hit = _ringMapCache.get(entry.imageData);
-  if (hit) return hit;
+  if (hit && hit.flip === flip) return hit.entry;
   const ring = detectRing(entry.imageData.data, entry.width, entry.height);
-  const strip = unwrapRing(entry.imageData.data, entry.width, entry.height, ring);
+  const strip = unwrapRing(entry.imageData.data, entry.width, entry.height, ring, { flip });
   const imageData = new ImageData(strip.data, strip.width, strip.height);
   const canvas = document.createElement('canvas');
   canvas.width = strip.width; canvas.height = strip.height;
@@ -6087,7 +6103,7 @@ function _ringMapFor(i, entry) {
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   const out = { ...entry, imageData, width: strip.width, height: strip.height, texture, ring };
-  _ringMapCache.set(entry.imageData, out);
+  _ringMapCache.set(entry.imageData, { flip, entry: out });
   return out;
 }
 
@@ -6123,7 +6139,7 @@ function _grownMapFor(i, entry) {
 
 /** The active layer's map after texture smoothing / inversion (see _effectiveMapFor). */
 function getEffectiveMapEntry() {
-  return _effectiveMapFor(activeMapEntry, settings.textureSmoothing, settings.invertTexture);
+  return _effectiveMapFor(activeMapEntry, settings.textureSmoothing, settings.invertTexture, settings.textureQuarter);
 }
 
 // Processed-map cache: one entry per (map, smoothing, invert) combination in
@@ -6137,12 +6153,20 @@ const EFFECTIVE_MAP_CACHE_MAX = MAX_LAYERS + 2;
  * applied — the pixels BOTH the GPU preview and the CPU bake/export consume.
  * Returns the raw entry when nothing needs processing, null for no map.
  */
-function _effectiveMapFor(mapEntry, textureSmoothing, invert) {
+/** Texture ▸ Rotate 90° button shows the current turn. */
+function _syncTextureQuarter() {
+  const el = document.getElementById('texture-rotate-deg');
+  if (el) el.textContent = `${(settings.textureQuarter || 0) * 90}°`;
+  document.getElementById('texture-rotate-btn')?.classList.toggle('active', !!settings.textureQuarter);
+}
+
+function _effectiveMapFor(mapEntry, textureSmoothing, invert, quarter = 0) {
   if (!mapEntry) return null;
   if (!mapEntry.texture) return null;   // still loading
-  if ((textureSmoothing ?? 0) === 0 && !invert) return mapEntry;
+  quarter = ((Math.round(Number(quarter) || 0) % 4) + 4) % 4;   // Texture ▸ Rotate 90°: quarter turns clockwise
+  if ((textureSmoothing ?? 0) === 0 && !invert && !quarter) return mapEntry;
   const { fullCanvas, width, height, name } = mapEntry;
-  const cacheKey = `${name}_${width}_${height}_${textureSmoothing}_${!!invert}_${mapEntry.customId ?? ''}`;
+  const cacheKey = `${name}_${width}_${height}_${textureSmoothing}_${!!invert}_${quarter}_${mapEntry.customId ?? ''}`;
   // Two uploads can share a file name and size, so also check it was derived from this very map.
   const hit = _effectiveMapCache.get(cacheKey);
   if (hit && hit.fullCanvas === fullCanvas) {
@@ -6179,7 +6203,21 @@ function _effectiveMapFor(mapEntry, textureSmoothing, invert) {
   } else {
     ctx.drawImage(fullCanvas, 0, 0);
   }
-  const imageData = ctx.getImageData(0, 0, width, height);
+  // Quarter turns: the map itself turns (odd turns swap its width and height),
+  // so preview, export and every projection see the turned image.
+  let outCanvas = offscreen, outCtx = ctx, W = width, H = height;
+  if (quarter) {
+    const odd = quarter % 2 === 1;
+    W = odd ? height : width; H = odd ? width : height;
+    outCanvas = document.createElement('canvas');
+    outCanvas.width = W; outCanvas.height = H;
+    outCtx = outCanvas.getContext('2d');
+    outCtx.translate(W / 2, H / 2);
+    outCtx.rotate(quarter * Math.PI / 2);
+    outCtx.drawImage(offscreen, -width / 2, -height / 2);
+    outCtx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+  const imageData = outCtx.getImageData(0, 0, W, H);
   if (invert) {
     // Invert the height map itself; amplitude still controls push/pull direction.
     // Both the GPU preview and CPU bake/export consume these same pixels.
@@ -6192,11 +6230,11 @@ function _effectiveMapFor(mapEntry, textureSmoothing, invert) {
       // Canvas2D preserves the same RGB values used by CPU bake/export.
       pixels[i + 3] = 255;
     }
-    ctx.putImageData(imageData, 0, 0);
+    outCtx.putImageData(imageData, 0, 0);
   }
-  const texture   = new THREE.CanvasTexture(offscreen);
+  const texture   = new THREE.CanvasTexture(outCanvas);
   texture.wrapS   = texture.wrapT = THREE.RepeatWrapping;
-  const entry = { ...mapEntry, imageData, texture };
+  const entry = { ...mapEntry, imageData, texture, width: W, height: H };
   _effectiveMapCache.set(cacheKey, { entry, fullCanvas });
   while (_effectiveMapCache.size > EFFECTIVE_MAP_CACHE_MAX) {
     const oldestKey = _effectiveMapCache.keys().next().value;
@@ -7737,7 +7775,7 @@ const PERSISTED_KEYS = [
   'mappingMode', 'scaleU', 'scaleV', 'lockScale',
   'offsetU', 'offsetV', 'rotation', 'rotateAroundZ',
   'amplitude', 'textureHeight', 'invertDisplacement',
-  'invertTexture',
+  'invertTexture', 'textureQuarter',
   'symmetricDisplacement', 'noDownwardZ', 'smoothBottom', 'harvestFlatFaces', 'harvestTol', 'preserveUntextured', 'colorMode', 'colorBands', 'colorThresholds', 'filamentColors', 'textureSmoothing',
   'mappingBlend', 'seamBandWidth', 'capAngle', 'boundaryFalloff', 'boundaryFalloffCurve',
   'bottomAngleLimit', 'topAngleLimit',
@@ -7748,7 +7786,7 @@ const PERSISTED_KEYS = [
   'cylinderPanelMinimized',
   // Stamp placement; the centre, side and normal are nullable like the cylinder axis.
   'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
-  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance', 'stampRing', 'stampRingPlace',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ', 'stampWrap', 'stampRepeats', 'stampBandWidth', 'stampRelief', 'stampFilament', 'stampRepeatsV', 'stampColorSpread', 'stampLineGrow', 'stampClearance', 'stampRing', 'stampRingPlace', 'stampRingFlip',
 ];
 
 // Settings that are NOT per layer (see LAYER_KEYS): resolution, triangle
@@ -7940,6 +7978,8 @@ function applySettingsSnapshot(snap) {
   }
 
   // Older projects were created with the original texture polarity.
+  settings.textureQuarter = ((Math.round(Number(snap.textureQuarter) || 0) % 4) + 4) % 4;
+  _syncTextureQuarter();
   invertTextureCheckbox.checked = snap.invertTexture ?? false;
   invertTextureCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
 
@@ -8064,6 +8104,7 @@ function applySettingsSnapshot(snap) {
   settings.stampClearance = Math.max(0, Number(snap.stampClearance) || 0);
   settings.stampRing = !!snap.stampRing;
   settings.stampRingPlace = ['top', 'bottom', 'wall'].includes(snap.stampRingPlace) ? snap.stampRingPlace : 'top';
+  settings.stampRingFlip = !!snap.stampRingFlip;
   settings.stampCenterX = snap.stampCenterX ?? null;
   settings.stampCenterY = snap.stampCenterY ?? null;
   settings.stampCenterZ = snap.stampCenterZ ?? null;
@@ -8152,6 +8193,7 @@ const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   offsetU: 0, offsetV: 0, rotation: 0, rotateAroundZ: false,
   amplitude: 0.5, textureHeight: 0.5, invertDisplacement: false,
   invertTexture: false,
+  textureQuarter: 0,      // Texture ▸ Rotate 90°: quarter turns of the map itself (0–3)
   symmetricDisplacement: false, noDownwardZ: false, smoothBottom: true, harvestFlatFaces: true, harvestTol: 0.005, preserveUntextured: true, textureSmoothing: 0,
   colorMode: 'off', colorBands: 2, colorThresholds: [50],
   filamentColors: ['#3f8f5a', '#f2c200', '#d9532b', '#2f6fd6'],
@@ -8163,7 +8205,7 @@ const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   cylinderCenterX: null, cylinderCenterY: null, cylinderRadius: null,
   cylinderPanelMinimized: false,
   stampOnce: false, stampCenterX: null, stampCenterY: null, stampCenterZ: null, stampSide: null,
-  stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampWrap: false, stampRepeats: 12, stampBandWidth: null, stampRelief: 'raised', stampFilament: 0, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0, stampRing: false, stampRingPlace: 'top',
+  stampNormalX: null, stampNormalY: null, stampNormalZ: null, stampWrap: false, stampRepeats: 12, stampBandWidth: null, stampRelief: 'raised', stampFilament: 0, stampRepeatsV: 1, stampColorSpread: 50, stampLineGrow: 0, stampClearance: 0, stampRing: false, stampRingPlace: 'top', stampRingFlip: false,
   activeMapName: DEFAULT_PRESET_NAME,
 });
 

@@ -61,3 +61,14 @@ test('a very large ring is capped in width and keeps its proportions', () => {
   assert.equal(s.width, 283);
   assert.equal(s.height, Math.round(30 * 283 / (2 * Math.PI * 90)));
 });
+
+test('flip turns the strip 180°: inner edge on top, angle reversed', () => {
+  const img = ringImage();
+  const ring = { cx: 100, cy: 100, rIn: 60, rOut: 90 };
+  const a = unwrapRing(img, N, N, ring);
+  const b = unwrapRing(img, N, N, ring, { flip: true });
+  assert.equal(b.width, a.width); assert.equal(b.height, a.height);
+  for (const [x, y] of [[2, 3], [100, 10], [a.width - 5, a.height - 2]]) {
+    assert.equal(b.data[(y * b.width + x) * 4], a.data[((a.height - 1 - y) * a.width + (a.width - 1 - x)) * 4]);
+  }
+});

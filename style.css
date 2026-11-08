@@ -3012,3 +3012,8 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
 .orn-add-row { display: flex; gap: 8px; margin-top: 8px; }
 .orn-add-btn { flex: 1 1 0; }
 .layer-btn.orn-del:hover { color: var(--danger); }
+
+/* Texture ▸ Rotate 90° next to Invert texture */
+.texture-rotate-btn { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.texture-rotate-btn .texture-rotate-deg { opacity: 0.7; font-variant-numeric: tabular-nums; }
+.texture-rotate-btn.active { color: var(--accent, #7c6cf0); border-color: var(--accent, #7c6cf0); }
