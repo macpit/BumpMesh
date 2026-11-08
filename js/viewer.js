@@ -548,6 +548,7 @@ export function initViewer(canvas) {
 
   // Rotation gizmo interaction
   _initGizmoInteraction();
+  _buildViewGizmo(renderer.domElement.parentElement);
   _initScaleGizmoInteraction();
 
   _section = new SectionController({
@@ -589,10 +590,12 @@ export function initViewer(canvas) {
     requestAnimationFrame(animate);
     if (_turntable) _stepTurntable();
     if (_spaceMouse.index !== -1) _stepSpaceMouse();
+    if (_viewAnim) _stepViewAnim();
     controls.update();
     if (_needsRender) {
       _needsRender = false;
       renderer.render(scene, camera);
+      _updateViewGizmo();
     }
   })();
 }
@@ -857,14 +860,8 @@ export function loadGeometry(geometry, material, { keepCamera = false } = {}) {
   sphere.copy(geometry.boundingSphere);
   if (!keepCamera) fitCamera(sphere);
 
-  // Place coordinate axes away from the part corner
-  if (axesGroup) { disposeGroup(axesGroup); scene.remove(axesGroup); }
-  const axisSize = sphere.radius * 0.30;
-  axesGroup = buildAxesIndicator(axisSize);
-  // Offset from the bounding box corner by ~1 axis-length so it doesn't overlap the mesh
-  const axisPad = axisSize * 1.8;
-  axesGroup.position.set(box.min.x - axisPad, box.min.y - axisPad, groundZ);
-  scene.add(axesGroup);
+  // The axes live in the view gizmo (top right of the viewport) now.
+  if (axesGroup) { disposeGroup(axesGroup); scene.remove(axesGroup); axesGroup = null; }
 
   // Bounding-box dimension annotations on the ground plane
   if (dimensionGroup) { disposeGroup(dimensionGroup); scene.remove(dimensionGroup); }
@@ -987,6 +984,123 @@ export function isSoftwareRendering() {
 }
 
 export function requestRender() { _needsRender = true; }
+
+// ── View gizmo (top right of the viewport) ───────────────────────────────────
+// The world axes as seen by the camera. Click an axis end to look along it
+// (X, Y from the side, Z from the top; the faint ends show the opposite side),
+// click the centre to go back to the 3D view. The camera keeps its target and
+// distance and swings there in a short animation.
+
+const _VG_SIZE = 104, _VG_C = _VG_SIZE / 2, _VG_LEN = 34;
+const _VG_AXES = [
+  { k: 'x', v: new THREE.Vector3(1, 0, 0), color: '#ff5050' },
+  { k: 'y', v: new THREE.Vector3(0, 1, 0), color: '#4cd26b' },
+  { k: 'z', v: new THREE.Vector3(0, 0, 1), color: '#4f8dff' },
+];
+const _VG_HOME = new THREE.Vector3(0.6, -1.2, 0.8).normalize();   // fitCamera's direction
+let _vg = null;
+let _viewAnim = null;   // { from, to, t0, dist }
+
+function _buildViewGizmo(container) {
+  if (!container || _vg) return;
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'view-gizmo');
+  svg.setAttribute('viewBox', `0 0 ${_VG_SIZE} ${_VG_SIZE}`);
+  svg.setAttribute('width', _VG_SIZE * 2);    // drawn at twice the viewBox size
+  svg.setAttribute('height', _VG_SIZE * 2);
+  const parts = [];
+  for (const a of _VG_AXES) {
+    for (const sign of [1, -1]) {
+      const g = document.createElementNS(NS, 'g');
+      g.setAttribute('class', `vg-end ${sign > 0 ? 'vg-pos' : 'vg-neg'}`);
+      g.setAttribute('role', 'button');
+      const label = (sign > 0 ? '' : '−') + a.k.toUpperCase();
+      g.setAttribute('aria-label', `View from ${label}`);
+      const title = document.createElementNS(NS, 'title');
+      title.textContent = `View from ${label}`;
+      const line = document.createElementNS(NS, 'line');
+      line.setAttribute('stroke', a.color);
+      line.setAttribute('stroke-width', sign > 0 ? '2.5' : '1.5');
+      line.setAttribute('stroke-linecap', 'round');
+      if (sign < 0) line.setAttribute('opacity', '0.45');
+      const dot = document.createElementNS(NS, 'circle');
+      dot.setAttribute('r', sign > 0 ? '9' : '6');
+      dot.setAttribute('fill', a.color);
+      if (sign < 0) { dot.setAttribute('fill-opacity', '0.3'); dot.setAttribute('stroke', a.color); }
+      g.append(title, line, dot);
+      if (sign > 0) {
+        const txt = document.createElementNS(NS, 'text');
+        txt.textContent = a.k.toUpperCase();
+        txt.setAttribute('text-anchor', 'middle');
+        txt.setAttribute('dominant-baseline', 'central');
+        g.append(txt);
+      }
+      g.addEventListener('click', (e) => { e.stopPropagation(); _viewFrom(a.v.clone().multiplyScalar(sign)); });
+      svg.append(g);
+      parts.push({ g, line, dot, txt: g.querySelector('text'), v: a.v, sign });
+    }
+  }
+  const home = document.createElementNS(NS, 'circle');
+  home.setAttribute('class', 'vg-home');
+  home.setAttribute('cx', _VG_C); home.setAttribute('cy', _VG_C); home.setAttribute('r', '7');
+  home.setAttribute('role', 'button');
+  home.setAttribute('aria-label', '3D view');
+  const homeTitle = document.createElementNS(NS, 'title');
+  homeTitle.textContent = '3D view';
+  home.append(homeTitle);
+  home.addEventListener('click', (e) => { e.stopPropagation(); _viewFrom(_VG_HOME.clone()); });
+  svg.append(home);
+  // Keep pointer events on the gizmo from starting an orbit or a paint stroke.
+  for (const ev of ['pointerdown', 'mousedown', 'wheel', 'dblclick']) svg.addEventListener(ev, e => e.stopPropagation());
+  container.append(svg);
+  _vg = { svg, parts, home };
+  _updateViewGizmo();
+}
+
+const _vgQ = new THREE.Quaternion(), _vgV = new THREE.Vector3();
+function _updateViewGizmo() {
+  if (!_vg || !camera) return;
+  _vgQ.copy(camera.quaternion).invert();
+  const order = [];
+  for (const p of _vg.parts) {
+    _vgV.copy(p.v).multiplyScalar(p.sign).applyQuaternion(_vgQ);
+    const x = _VG_C + _vgV.x * _VG_LEN, y = _VG_C - _vgV.y * _VG_LEN;
+    p.line.setAttribute('x1', _VG_C); p.line.setAttribute('y1', _VG_C);
+    p.line.setAttribute('x2', x); p.line.setAttribute('y2', y);
+    p.dot.setAttribute('cx', x); p.dot.setAttribute('cy', y);
+    if (p.txt) { p.txt.setAttribute('x', x); p.txt.setAttribute('y', y + 0.5); }
+    order.push([_vgV.z, p.g]);
+  }
+  // Ends pointing away from the viewer are drawn first, so the near ones stay clickable.
+  order.sort((a, b) => a[0] - b[0]);
+  for (const [, g] of order) _vg.svg.insertBefore(g, _vg.home);
+}
+
+/** Swing the camera to look at the target from direction dir (unit vector). */
+function _viewFrom(dir) {
+  if (!camera) return;
+  // Straight up/down would meet the orbit's pole clamp: tilt a hair towards −Y.
+  if (Math.abs(dir.z) > 0.999) dir.set(0, -Math.sin(_POLAR_EPS * 2), Math.sign(dir.z) * Math.cos(_POLAR_EPS * 2));
+  const off = camera.position.clone().sub(controls.target);
+  const dist = off.length() || 100;
+  _viewAnim = { from: off.normalize(), to: dir.normalize(), t0: performance.now(), dist };
+}
+
+function _stepViewAnim() {
+  const a = _viewAnim;
+  const t = Math.min(1, (performance.now() - a.t0) / 350);
+  const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;   // ease in-out
+  const q = new THREE.Quaternion().setFromUnitVectors(a.from, a.to);
+  const qt = new THREE.Quaternion().slerp(q, e);
+  const dir = a.from.clone().applyQuaternion(qt);
+  camera.position.copy(controls.target).addScaledVector(dir, a.dist);
+  camera.up.set(0, 0, 1);
+  camera.lookAt(controls.target);
+  camera.updateMatrixWorld();
+  _needsRender = true;
+  if (t >= 1) _viewAnim = null;
+}
 
 export function getRenderer()  { return renderer; }
 export function getCamera()    { return camera; }
