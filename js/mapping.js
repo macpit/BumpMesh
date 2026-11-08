@@ -12,6 +12,7 @@
 import { QuantizedPointMap } from './meshIndex.js';
 import { outlineWrapCapWeight, outlineWrapPlace } from './outlineWrap.js';
 import { unfoldPlace } from './unfold.js';
+import { bowlArc } from './bowlProfile.js';
 
 export const MODE_PLANAR_XY   = 0;
 export const MODE_PLANAR_XZ   = 1;
@@ -577,6 +578,11 @@ export function stampFrame(settings, bounds) {
     // the outer, from ringUnwrap.js detectRing), not the image's square.
     ringIn: (!!settings.stampRing && !wrap) ? Math.max(0, Math.min(0.99, Number(settings.stampRingInner) || 0)) : -1,
     ringOut: Math.max(0.01, Math.min(1, Number(settings.stampRingOuter) || 1)),
+    // Ring over the bowl (bowlProfile.js): (a, b) is the arc length from the
+    // bottom centre along the surface, in the direction around the axis;
+    // every side of the surface takes it, inside and out.
+    bowl: (!!settings.stampRing && settings.stampRingPlace === 'bowl' && settings.stampBowl && mode === MODE_PLANAR_XY)
+      ? settings.stampBowl : null,
     // Smooth Mask: the layer's falloff distance (mm) and curve also fade the
     // stamp's own border.
     fade: Math.max(Number(settings.boundaryFalloff) || 0, 0),
@@ -651,6 +657,15 @@ const _ab = { a: 0, b: 0, dth: 0 };
 function _stampAB(x, y, z, frame, out) {
   const { mode, side } = frame;
   let a, b;
+  if (frame.bowl) {
+    const dx = x - frame.cx, dy = y - frame.cy;
+    const r = Math.hypot(dx, dy);
+    const s = bowlArc(frame.bowl, r, z);
+    a = r > 1e-9 ? s * dx / r : 0;
+    b = r > 1e-9 ? s * dy / r : 0;
+    out.a = a; out.b = b;
+    return out;
+  }
   if (mode === MODE_SURFACE_NORMAL) {
     const dx = x - frame.cx, dy = y - frame.cy, dz = z - frame.cz;
     a = dx * frame.ux + dy * frame.uy + dz * frame.uz;
@@ -677,6 +692,7 @@ function _stampAB(x, y, z, frame, out) {
 
 /** Cosine between a normal and the stamp axis on the stamp side (outward radial for cylindrical). */
 function _stampFacing(nx, ny, nz, x, y, z, frame) {
+  if (frame.bowl) return 1;   // over the bowl: inside and outside alike
   const { mode, side } = frame;
   const nLen = Math.hypot(nx, ny, nz) || 1;
   let facing;
@@ -771,7 +787,7 @@ function _stampTriTexels(tx, ty, nu, nv, visit, conservative = false) {
  * seam, which are never in front of the stamped side.
  */
 export function buildStampDepth(pos, frame, res = STAMP_DEPTH_RES) {
-  if (frame.wrap) return null;   // a border runs all around: no footprint to hide behind
+  if (frame.wrap || frame.bowl) return null;   // a border runs all around, a bowl ring covers every side: nothing to hide behind
   const triCount = pos.length / 9;
   const big = Math.max(frame.sizeU, frame.sizeV);
   const nu = Math.max(16, Math.round(res * frame.sizeU / big));

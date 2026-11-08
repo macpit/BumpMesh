@@ -29,6 +29,7 @@ import { runPreviewPipeline, computeFaceNormals } from './previewPipeline.js';
 import { exportSTL, export3MF } from './exporter.js';
 import { growLines } from './lineGrow.js';
 import { detectRing, unwrapRing } from './ringUnwrap.js';
+import { buildBowlTable } from './bowlProfile.js';
 import { bandThresholds, heightRangeMm, heightHistogram, bandShares, bandOf } from './colorBands.js';
 
 // Default contour heights (% of the texture height) for 2, 3 and 4 filament colors.
@@ -3157,7 +3158,8 @@ function _previewLayers() {
       blendAdd: index > 0 && L.blendAdd,
       stampOnce: s.stampOnce, stampSide: s.stampSide, stampWrap: s.stampWrap, stampRepeats: s.stampRepeats, stampBandWidth: s.stampBandWidth,
       stampFilament: s.stampFilament, stampRepeatsV: s.stampRepeatsV, stampColorSpread: s.stampColorSpread, stampClearance: s.stampClearance,
-      stampRing: s.stampRing, ..._ringRadiiFor(index, entry),
+      stampRing: s.stampRing, stampRingPlace: s.stampRingPlace, ..._ringRadiiFor(index, entry), ..._bowlFor(index),
+      stampBowlTexture: _bowlTableFor(index)?.texture ?? null,
       stampCenterX: s.stampCenterX, stampCenterY: s.stampCenterY, stampCenterZ: s.stampCenterZ,
       stampNormalX: s.stampNormalX, stampNormalY: s.stampNormalY, stampNormalZ: s.stampNormalZ,
       mapWidth: tw, mapHeight: th,
@@ -3266,7 +3268,7 @@ function _pipelineInputs() {
     }
     out.push({
       imageData: entry.imageData, imgWidth: entry.width, imgHeight: entry.height,
-      settings: _owSettings({ ...settings, ...s, ..._ringRadiiFor(i, entry) }),
+      settings: _owSettings({ ...settings, ...s, ..._ringRadiiFor(i, entry), ..._bowlFor(i) }),
       exclude, hardFaces: hardMasked,
       blendAdd: L !== layers[0] && L.blendAdd,
       stampDepth: frame ? frame.depth : null,
@@ -3801,7 +3803,7 @@ function _setRingPlace(place) {
   settings.stampOnce = true;
   settings.stampRing = true;
   settings.stampRingPlace = place;
-  const wantMode = place === 'wall' ? 3 : 0;
+  const wantMode = place === 'wall' ? 3 : 0;   // top / bottom / bowl: planar along the axis
   if (!STAMP_MODES.has(settings.mappingMode) && _modeBeforeStamp == null) _modeBeforeStamp = settings.mappingMode;
   if (settings.mappingMode !== wantMode) {
     mappingSelect.value = String(wantMode);
@@ -3814,6 +3816,17 @@ function _setRingPlace(place) {
     settings.stampCenterX = null; settings.stampCenterY = null;
     if (settings.stampCenterZ == null || settings.stampCenterZ > b.max.z || settings.stampCenterZ < b.min.z) settings.stampCenterZ = b.center.z;
     settings.stampBandWidth = _ringFitWidth();
+  } else if (place === 'bowl') {
+    // Centred on the bottom, the image radius running along the surface up to the rim.
+    settings.stampWrap = false;
+    settings.stampSide = 1;
+    settings.stampCenterX = settings.cylinderCenterX ?? b.center.x;
+    settings.stampCenterY = settings.cylinderCenterY ?? b.center.y;
+    settings.stampCenterZ = b.min.z;
+    const bowl = _bowlTableFor(activeLayer);
+    const radii = _ringRadiiFor(activeLayer, getEffectiveMapEntry());
+    const outer = radii.stampRingOuter || 1;
+    _setStampSizeMm(bowl ? +(2 * bowl.table.sTop / outer).toFixed(1) : +(Math.max(b.size.x, b.size.y)).toFixed(1));
   } else {
     settings.stampWrap = false;
     settings.stampSide = place === 'top' ? 1 : -1;
@@ -3901,7 +3914,7 @@ function _syncOrnamentUI() {
     document.getElementById('orn-ring-flip-row').style.display = flat ? 'none' : '';
     document.getElementById('orn-ring-flip').checked = !!settings.stampRingFlip;
     const dr = document.getElementById('orn-ring-dia'), dv = document.getElementById('orn-ring-dia-val');
-    if (currentBounds) dr.max = String(Math.ceil(Math.max(currentBounds.size.x, currentBounds.size.y) * 1.5));
+    if (currentBounds) dr.max = String(Math.ceil(Math.max(currentBounds.size.x, currentBounds.size.y, currentBounds.size.z) * 3));
     if (document.activeElement !== dv) { dr.value = String(settings.scaleU); dv.value = String(+(+settings.scaleU).toFixed(1)); }
   }
   document.getElementById('orn-repeats-row').style.display = ring ? 'none' : '';
@@ -4135,7 +4148,7 @@ function _stampFrameFor(i) {
   const entry = isActive ? getEffectiveMapEntry() : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture, s.textureQuarter);
   const tw = entry?.width ?? 1, th = entry?.height ?? 1;
   const tmax = Math.max(tw, th, 1);
-  return stampFrame({ ...s, textureAspectU: tmax / Math.max(tw, 1), textureAspectV: tmax / Math.max(th, 1) }, currentBounds);
+  return stampFrame({ ...s, ..._bowlFor(i), textureAspectU: tmax / Math.max(tw, 1), textureAspectV: tmax / Math.max(th, 1) }, currentBounds);
 }
 
 /**
@@ -6054,6 +6067,30 @@ const _ringMapCache = new WeakMap();   // source imageData → { flip, entry }
  * A flat ring's drawn radii as shares of half the image (stampRingInner /
  * stampRingOuter for mapping.js stampFrame), detected once per map.
  */
+// Ornaments ▸ Ring over the bowl: the model's arc-length table (bowlProfile.js),
+// rebuilt when the geometry or the axis changes; its texture feeds the shader.
+let _bowlCache = null;   // { key, table, texture }
+function _bowlTableFor(i) {
+  const L = layers[i];
+  const s = L ? (i === activeLayer ? settings : L.settings) : null;
+  if (!s || !s.stampOnce || !s.stampRing || s.stampRingPlace !== 'bowl' || !currentGeometry || !currentBounds) return null;
+  const pa = currentGeometry.attributes.position;
+  const cx = s.cylinderCenterX ?? currentBounds.center.x, cy = s.cylinderCenterY ?? currentBounds.center.y;
+  const key = `${currentGeometry.uuid}_${pa.version}_${pa.count}_${cx}_${cy}`;
+  if (_bowlCache && _bowlCache.key === key) return _bowlCache;
+  const table = buildBowlTable(pa.array, cx, cy);
+  const texture = new THREE.DataTexture(table.data, table.nr, table.nz, THREE.RedFormat, THREE.FloatType);
+  texture.minFilter = texture.magFilter = THREE.NearestFilter;
+  texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+  const old = _bowlCache;
+  _bowlCache = { key, table, texture };
+  if (old) setTimeout(() => old.texture.dispose(), 2000);
+  return _bowlCache;
+}
+const _bowlFor = (i) => { const b = _bowlTableFor(i); return b ? { stampBowl: b.table } : {}; };
+
 const _ringRadiiCache = new WeakMap();
 function _ringRadiiFor(i, entry) {
   const L = layers[i];
@@ -8086,7 +8123,7 @@ function applySettingsSnapshot(snap) {
   settings.stampLineGrow = Math.max(0, Number(snap.stampLineGrow) || 0);
   settings.stampClearance = Math.max(0, Number(snap.stampClearance) || 0);
   settings.stampRing = !!snap.stampRing;
-  settings.stampRingPlace = ['top', 'bottom', 'wall'].includes(snap.stampRingPlace) ? snap.stampRingPlace : 'top';
+  settings.stampRingPlace = ['top', 'bottom', 'wall', 'bowl'].includes(snap.stampRingPlace) ? snap.stampRingPlace : 'top';
   settings.stampRingFlip = !!snap.stampRingFlip;
   settings.stampCenterX = snap.stampCenterX ?? null;
   settings.stampCenterY = snap.stampCenterY ?? null;

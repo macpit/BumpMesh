@@ -61,6 +61,8 @@ export default {
   "tooltips.textureRotate": "Turn the texture image a quarter turn clockwise (0°, 90°, 180°, 270°) — for every projection, stamps, borders and rings.",
   "orn.ringFlip": "Turn over (180°)",
   "orn.ringFlipTitle": "Turns the rolled-out band 180°: the inner edge on top. For drawings whose figures stand on the outer edge, so they are upright on the wall.",
+  "orn.ringBowl": "Over the bowl",
+  "orn.ringBowlTitle": "Laid over the whole bowl from the centre of its bottom: the image radius runs along the surface up the wall, inside and outside alike, as if punched through.",
   "orn.filamentNone": "Same as the model",
   "steps.ornaments": "Ornaments",
   "steps.ornamentsTitle": "Ornaments: stamps and borders",

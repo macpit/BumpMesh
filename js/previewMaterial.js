@@ -68,6 +68,8 @@ const sharedGLSL = /* glsl */`
   uniform vec4      layerStampSize[MAX_LAYERS]; // stamp: xy = footprint (mm), zw = height map size (texels)
   uniform vec2      layerStampFade[MAX_LAYERS]; // stamp: x = Smooth Mask distance (mm), y = curve (FALLOFF_CURVE_INDEX)
   uniform int       layerStampWrap[MAX_LAYERS]; // border: rows stacked in the band (≥ 1), 0 = plain stamp
+  uniform vec4      layerStampBowl[MAX_LAYERS];  // ring over the bowl: rMax, zMin, zMax, on (arc-length table in stampDepthN)
+  uniform vec2      layerStampBowlN[MAX_LAYERS]; // its table size (nr, nz)
   uniform vec2      layerStampRing[MAX_LAYERS];  // flat ring: inner, outer radius of the drawing / half the image (covers the annulus only); x −1 = not a ring
   uniform float     layerStampClear[MAX_LAYERS]; // stamp clearance frame around the image (mm, mapping.js stampFrame clear)
   uniform float     layerOrnThr[MAX_LAYERS];    // ornament color spread: cut level of the pattern value (mapping.js ornamentThreshold)
@@ -174,8 +176,42 @@ const sharedGLSL = /* glsl */`
   // stamp side) in z.
   const float STAMP_FACING_LO = 0.15;
   const float STAMP_FACING_HI = 0.30;
+  // Explicit LOD: looked up inside branches, where implicit derivatives are undefined.
+  float stampDepthAt(int l, vec2 tc) {
+    float d;
+    if      (l == 0) d = textureLod(stampDepth0, tc, 0.0).r;
+    else if (l == 1) d = textureLod(stampDepth1, tc, 0.0).r;
+    else if (l == 2) d = textureLod(stampDepth2, tc, 0.0).r;
+    else             d = textureLod(stampDepth3, tc, 0.0).r;
+    return d;
+  }
+
+  // Ring over the bowl: arc length from the bottom centre along the surface
+  // (bowlProfile.js bowlArc), bilinear over the nearest-filtered table.
+  float bowlArc(int l, float r, float z) {
+    vec4 b = layerStampBowl[l];
+    vec2 nn = layerStampBowlN[l];
+    vec2 f = clamp(vec2(r / b.x, (z - b.y) / max(b.z - b.y, 1e-6)), 0.0, 1.0) * (nn - 1.0);
+    vec2 f0 = min(floor(f), nn - 2.0);
+    vec2 t = f - f0;
+    float a  = stampDepthAt(l, (f0 + vec2(0.5, 0.5)) / nn);
+    float bb = stampDepthAt(l, (f0 + vec2(1.5, 0.5)) / nn);
+    float c  = stampDepthAt(l, (f0 + vec2(0.5, 1.5)) / nn);
+    float d  = stampDepthAt(l, (f0 + vec2(1.5, 1.5)) / nn);
+    return mix(mix(a, bb, t.x), mix(c, d, t.x), t.y);
+  }
+
   vec3 stampFrame(int l, vec3 pos, vec3 n) {
     vec4 st = layerStamp[l];
+    if (layerStampBowl[l].w > 0.5) {
+      vec2 rc = pos.xy - st.xy;
+      float r = length(rc);
+      float s = bowlArc(l, r, pos.z);
+      vec2 d0 = r > 1e-6 ? rc * (s / r) : vec2(0.0);
+      float c0 = cos(layerRot[l]); float s0 = sin(layerRot[l]);
+      d0 = vec2(c0 * d0.x - s0 * d0.y, s0 * d0.x + c0 * d0.y);
+      return vec3(d0 / layerStampSize[l].xy + 0.5, 1.0);
+    }
     float side = st.w;
     int mode = layerMode[l];
     vec2 d;
@@ -228,15 +264,6 @@ const sharedGLSL = /* glsl */`
     else if (mode == 2) h = pos.x;
     else                h = length(pos.xy - layerCylCenter[l]);
     return h * layerStamp[l].w;
-  }
-  // Explicit LOD: looked up inside branches, where implicit derivatives are undefined.
-  float stampDepthAt(int l, vec2 tc) {
-    float d;
-    if      (l == 0) d = textureLod(stampDepth0, tc, 0.0).r;
-    else if (l == 1) d = textureLod(stampDepth1, tc, 0.0).r;
-    else if (l == 2) d = textureLod(stampDepth2, tc, 0.0).r;
-    else             d = textureLod(stampDepth3, tc, 0.0).r;
-    return d;
   }
   // f = stampFrame(): true when a surface nearer the stamp side hides pos.
   bool stampOccluded(int l, vec3 pos, vec3 f) {
@@ -881,9 +908,17 @@ export function updateMaterial(material, layers, settings) {
     u.layerOrnFil.value[l]            = st && L.stampFilament > 0 ? Math.min(4, L.stampFilament | 0) : 0;
     u.layerStampFade.value[l * 2]     = st ? st.fade : 0;
     u.layerStampFade.value[l * 2 + 1] = st ? (FALLOFF_CURVE_INDEX[st.fadeCurve] ?? 0) : 0;
-    const sd = st && L.stampDepth ? L.stampDepth : null;
+    // A ring over the bowl has no occlusion map; its arc-length table takes that texture slot.
+    const bowl = st && st.bowl && L.stampBowlTexture ? st.bowl : null;
+    const sd = st && L.stampDepth && !bowl ? L.stampDepth : null;
     const depthU = u['stampDepth' + l];
-    const depthTex = sd ? sd.texture : _fallbackDepthTexture();
+    const depthTex = bowl ? L.stampBowlTexture : sd ? sd.texture : _fallbackDepthTexture();
+    u.layerStampBowl.value[l * 4]     = bowl ? bowl.rMax : 1;
+    u.layerStampBowl.value[l * 4 + 1] = bowl ? bowl.zMin : 0;
+    u.layerStampBowl.value[l * 4 + 2] = bowl ? bowl.zMax : 1;
+    u.layerStampBowl.value[l * 4 + 3] = bowl ? 1 : 0;
+    u.layerStampBowlN.value[l * 2]     = bowl ? bowl.nr : 2;
+    u.layerStampBowlN.value[l * 2 + 1] = bowl ? bowl.nz : 2;
     if (depthU.value !== depthTex) depthU.value = depthTex;
     u.layerStampDepth.value[l * 4]     = sd ? 1 : 0;
     u.layerStampDepth.value[l * 4 + 1] = sd ? sd.depth.texel : 0;
@@ -953,6 +988,8 @@ function buildUniforms() {
     layerOrnThr: { value: new Float32Array(MAX_LAYERS).fill(0.5) },
     layerStampClear: { value: new Float32Array(MAX_LAYERS) },
     layerStampRing: { value: new Float32Array(MAX_LAYERS * 2).fill(-1) },
+    layerStampBowl: { value: new Float32Array(MAX_LAYERS * 4) },
+    layerStampBowlN: { value: new Float32Array(MAX_LAYERS * 2).fill(2) },
     layerStampDepth: { value: new Float32Array(MAX_LAYERS * 4) },
     layerStampNormal: { value: new Float32Array(MAX_LAYERS * 3) },
     layerStampAxisU:  { value: new Float32Array(MAX_LAYERS * 3) },

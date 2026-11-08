@@ -61,6 +61,8 @@ export default {
   "tooltips.textureRotate": "Das Texturbild eine Vierteldrehung im Uhrzeigersinn drehen (0°, 90°, 180°, 270°) – für jede Projektion, Stempel, Bordüren und Ringe.",
   "orn.ringFlip": "Umdrehen (180°)",
   "orn.ringFlipTitle": "Dreht das aufgerollte Band um 180°: der innere Rand oben. Für Zeichnungen, deren Figuren auf dem äusseren Rand stehen – so stehen sie auf der Wand aufrecht.",
+  "orn.ringBowl": "Über die Schale",
+  "orn.ringBowlTitle": "Ab der Bodenmitte über die ganze Schale gelegt: der Bildradius läuft entlang der Fläche die Wand hinauf, innen und aussen gleich, wie gestanzt.",
   "orn.filamentNone": "Wie das Modell",
   "steps.ornaments": "Ornamente",
   "steps.ornamentsTitle": "Ornamente: Stempel und Bordüren",
