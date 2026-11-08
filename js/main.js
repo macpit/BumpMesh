@@ -1153,8 +1153,10 @@ function updateCylinderUIVisibility() {
   // Show the panel whenever the user is in cylindrical mode, even without a
   // model loaded — they get the empty placeholder until they load one, which
   // makes it clear that the gizmo will appear there.
-  cylinderPanel.classList.toggle('hidden', !isCyl);
-  if (isCyl) {
+  // Only in the steps that place it (Mapping, Ornaments); elsewhere it just covers the view.
+  const show = isCyl && (_activeStep === 'projection' || _activeStep === 'ornaments');
+  cylinderPanel.classList.toggle('hidden', !show);
+  if (show) {
     if (currentGeometry) _buildCylinderSilhouette();
     _scheduleCylinderPanelRedraw();
   }
@@ -2062,7 +2064,7 @@ function wireEvents() {
       if (step === 'mask' && exclusionTool && !_filamentPaint) setExclusionTool(null);
       if (step === 'colors' && _filamentPaint) _setFilamentPaint(0, null);
     },
-    onShow: (step) => { _activeStep = step; _syncScaleGizmo(); },
+    onShow: (step) => { _activeStep = step; _syncScaleGizmo(); updateCylinderUIVisibility(); },
   });
 
   // ── Menu bar: File ▸ Load model / Recent ──
