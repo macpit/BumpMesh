@@ -140,7 +140,18 @@ header {
   display: flex;
   align-items: center;
   gap: 2px;
-  margin-left: 8px;
+  margin-left: -8px;
+}
+
+/* The logo is the Info menu's title */
+.menu-btn.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 8px;
+  font-size: 14px;
+  letter-spacing: 0.02em;
 }
 
 .menu { position: relative; }
@@ -153,7 +164,8 @@ header {
   border-radius: 6px;
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
 }
 .menu-btn:hover,
@@ -276,6 +288,110 @@ header {
 .about-tagline { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .about-links { margin-top: 14px; }
 .about-links a { color: var(--accent); }
+
+/* ── Tool rail (js/toolRail.js) ─────────────────────────────────────── */
+.tool-rail {
+  flex-shrink: 0;
+  width: 68px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 8px 6px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  scrollbar-width: none;
+  z-index: 5;
+}
+
+.rail-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 2px 6px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.rail-btn svg { width: 24px; height: 24px; }
+.rail-btn span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-btn:hover { background: var(--surface2); color: var(--text); }
+.rail-btn.active { background: var(--surface2); border-color: var(--border); color: var(--accent); }
+main.sidebar-collapsed .rail-btn.active { background: none; border-color: transparent; }
+.rail-btn:disabled { opacity: 0.35; cursor: default; background: none; color: var(--text-muted); }
+.rail-sep { height: 1px; margin: 4px 8px; background: var(--border); flex-shrink: 0; }
+
+/* Only the active step's sections show (data-step on each section) */
+#settings-panel .step-off { display: none; }
+
+/* Export buttons stay visible under every step */
+#settings-panel { display: flex; flex-direction: column; }
+#settings-panel > .panel-section { flex-shrink: 0; }
+.panel-footer {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding: 12px 16px 14px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  z-index: 2;
+}
+.panel-footer .export-progress { margin-bottom: 10px; }
+.panel-footer .export-buttons { display: flex; gap: 8px; }
+.panel-footer #export-3mf-btn { flex: 1; }
+.export-buttons .export-btn.export-btn--secondary {
+  flex: 0 0 auto;
+  width: auto;
+  padding-left: 14px;
+  padding-right: 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.export-buttons .export-btn.export-btn--secondary:hover:not(:disabled) { color: var(--text); border-color: var(--accent); background: var(--surface2); }
+.color-stl-note { margin-top: 10px; }
+/* Explanations live in the tooltip; the ⓘ marks that one is there */
+.panel-subsection-heading.has-tip { cursor: help; }
+.panel-subsection-heading.has-tip::after { content: " ⓘ"; }
+.export-buttons #bake-btn { flex: 1 1 auto; }
+
+/* ── Model ▸ Scale ───────────────────────────────────────────────────── */
+.scale-model { margin-top: 14px; }
+.scale-grid {
+  display: grid;
+  grid-template-columns: 48px repeat(3, minmax(0, 1fr)) 26px;
+  align-items: center;
+  gap: 6px;
+}
+.scale-grid label { font-size: 12px; color: var(--text); }
+.scale-grid .val { width: 100%; min-width: 0; text-align: right; }
+.scale-axis { text-align: center; font-size: 11px; font-weight: 700; }
+.scale-axis--x { color: #e5484d; }
+.scale-axis--y { color: #46a758; }
+.scale-axis--z { color: #3e8ef7; }
+.scale-unit { font-size: 11px; color: var(--text-muted); }
+.scale-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+.scale-reset-btn {
+  padding: 4px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.scale-reset-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.scale-reset-btn:disabled { opacity: 0.4; cursor: default; }
 
 /* ── Main layout ─────────────────────────────────────────────────────── */
 main {
@@ -1328,6 +1444,20 @@ main.gallery-open #settings-panel { display: none; }
 /* Portrait: the viewport on top, the sidebar below it at full width. */
 @media (max-width: 699px) and (orientation: portrait) {
   main { flex-direction: column; }
+  /* The rail becomes a row of icons between the viewport and the settings */
+  .tool-rail {
+    order: 1;
+    width: auto;
+    flex-direction: row;
+    padding: 4px 6px;
+    border-right: 0;
+    border-top: 1px solid var(--border);
+    overflow-x: auto;
+  }
+  .rail-btn { flex: 1 0 52px; padding: 5px 2px 4px; }
+  .rail-btn svg { width: 20px; height: 20px; }
+  .rail-sep { width: 1px; height: auto; margin: 6px 2px; }
+  .sidebar-toggle, #settings-panel, .gallery-panel { order: 2; }
   #settings-panel,
   .gallery-panel {
     width: auto;

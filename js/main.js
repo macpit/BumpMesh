@@ -9,7 +9,7 @@ import { initViewer, loadGeometry, setMeshMaterial, setMeshGeometry, setWirefram
          setExclusionOverlay, setHoverPreview, setViewerTheme,
          setProjection, requestRender,
          clearDiagOverlays, setDiagEdges, addDiagFaces,
-         setRotationGizmo, isGizmoDragging, isSoftwareRendering, setTurntable,
+         setRotationGizmo, setScaleGizmo, updateScaleGizmo, isGizmoDragging, isSoftwareRendering, setTurntable,
          setSectionView, setSectionAxis, flipSection, setSectionHandlesLocked,
          sectionVisibleHits, setResultPreview } from './viewer.js';
 import { loadModelFile, computeBounds, getTriangleCount }  from './stlLoader.js';
@@ -50,6 +50,7 @@ import { buildOutlineWrap, outlineWrapPlaces } from './outlineWrap.js';
 import { QuantizedPointMap } from './meshIndex.js';
 import { APP_VERSION } from './version.js';
 import { initMenuBar } from './menuBar.js';
+import { initToolRail } from './toolRail.js';
 import { listRecent, addRecent, getRecent, clearRecent } from './recentFiles.js';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 
@@ -65,6 +66,13 @@ let currentBounds     = null;   // bounds of the original geometry
 // not part of the output.
 let currentPoseRot    = new THREE.Quaternion();
 let currentPoseTrans  = new THREE.Vector3();
+let _activeStep       = null;   // tool rail step (js/toolRail.js)
+let modelScale        = { x: 1, y: 1, z: 1 };   // Model ▸ Scale, relative to the size the model was loaded with
+// Every move of the loaded geometry (rotate, place on face, scale, re-centre)
+// folded into one matrix: loaded positions → current positions. Undo/redo
+// restore a step's matrix by applying target · current⁻¹ to the mesh.
+let _geoMatrix        = new THREE.Matrix4();
+const _m4             = new THREE.Matrix4();
 let _rotatePoseSnapshot = null; // { rot, trans } captured on rotate-mode entry, restored by the reset button alongside _rotateOriginalPositions
 let currentStlName    = 'model'; // base filename of the loaded STL (no extension)
 let currentStlExt     = '.stl';  // source file extension (.stl/.obj/.3mf/.step/.stp), for the stats line
@@ -379,6 +387,83 @@ function _setMeshInfo(triCount, mb, sx, sy, sz) {
   const stats = t('ui.meshInfo', { n: triCount.toLocaleString(), mb, sx, sy, sz });
   const fileName = currentStlName ? `${currentStlName}${currentStlExt}` : '';
   meshInfo.textContent = fileName ? `${fileName} · ${stats}` : stats;
+  _syncScaleFields();
+}
+
+// ── Model ▸ Scale ────────────────────────────────────────────────────────────
+// Like the slicers' scale tool: per-axis percent of the loaded size or a size
+// in mm, uniform by default. The scale is baked into the geometry (about its
+// centre); the pose translation scales along so a saved project's model.stl
+// keeps its placement.
+
+const _AXES = ['x', 'y', 'z'];
+const _round = (v, d) => { const f = 10 ** d; return Math.round(v * f) / f; };
+
+function _syncScaleFields() {
+  const box = document.getElementById('scale-model');
+  if (!box) return;
+  const has = !!(currentGeometry && currentBounds);
+  for (const inp of box.querySelectorAll('.scale-in')) {
+    inp.disabled = !has;
+    if (!has) { inp.value = ''; continue; }
+    if (document.activeElement === inp) continue;
+    const a = inp.dataset.axis;
+    inp.value = inp.dataset.kind === 'pct'
+      ? _round(modelScale[a] * 100, 2)
+      : _round(currentBounds.size[a], 2);
+  }
+  document.getElementById('scale-reset-btn').disabled =
+    !has || _AXES.every(a => Math.abs(modelScale[a] - 1) < 1e-9);
+  _syncScaleGizmo();
+}
+
+/** Scale handles show while the Model step is open and no other model tool is active. */
+function _syncScaleGizmo() {
+  const on = !!currentGeometry && _activeStep === 'model' && !rotateActive && !placeOnFaceActive;
+  setScaleGizmo(on, {
+    uniform: () => document.getElementById('scale-uniform').checked,
+    onPreview: (f) => {
+      if (!currentBounds) return;
+      for (const a of _AXES) {
+        document.getElementById(`scale-pct-${a}`).value = _round(modelScale[a] * f[a] * 100, 2);
+        document.getElementById(`scale-mm-${a}`).value = _round(currentBounds.size[a] * f[a], 2);
+      }
+    },
+    onCommit: (f) => _applyModelScale(f),
+  });
+  if (on) updateScaleGizmo();
+}
+
+/** Multiply the model by f = {x,y,z} (factors relative to its current size). */
+function _applyModelScale(f) {
+  if (!currentGeometry) return;
+  if (_AXES.every(a => Math.abs(f[a] - 1) < 1e-9)) { _syncScaleFields(); return; }
+  if (rotateActive) toggleRotateMode(false);
+  _flushUndoCapture();   // a pending settings change stays its own undo step
+  currentGeometry.scale(f.x, f.y, f.z);
+  _geoMatrix.premultiply(_m4.makeScale(f.x, f.y, f.z));
+  currentPoseTrans.set(currentPoseTrans.x * f.x, currentPoseTrans.y * f.y, currentPoseTrans.z * f.z);
+  for (const a of _AXES) modelScale[a] *= f[a];
+  if (currentGeometry.attributes.faceNormal) currentGeometry.deleteAttribute('faceNormal');
+  currentGeometry.computeVertexNormals();
+  exportToken++;
+  _clearColorResult();
+  _rotateFinalize({ keepCamera: true });
+}
+
+function _onScaleInput(inp) {
+  if (!currentGeometry || !currentBounds) return;
+  const v = parseFloat(inp.value);
+  const a = inp.dataset.axis;
+  if (!(v > 0)) { _syncScaleFields(); return; }
+  const k = inp.dataset.kind === 'pct'
+    ? (v / 100) / modelScale[a]
+    : v / currentBounds.size[a];
+  if (!isFinite(k) || k <= 0) { _syncScaleFields(); return; }
+  const uniform = document.getElementById('scale-uniform').checked;
+  const f = { x: 1, y: 1, z: 1 };
+  if (uniform) f.x = f.y = f.z = k; else f[a] = k;
+  _applyModelScale(f);
 }
 const exportBtn        = document.getElementById('export-btn');
 const export3mfBtn     = document.getElementById('export-3mf-btn');
@@ -393,8 +478,6 @@ const bakeProgress     = document.getElementById('bake-progress');
 const bakeProgBar      = document.getElementById('bake-progress-bar');
 const bakeProgPct      = document.getElementById('bake-progress-pct');
 const bakeProgLbl      = document.getElementById('bake-progress-label');
-const advancedSection  = document.getElementById('advanced-section');
-const advancedToggle   = document.getElementById('advanced-toggle');
 const wireframeToggle  = document.getElementById('wireframe-toggle');
 const projectionToggle = document.getElementById('projection-toggle');
 const sectionToggle    = document.getElementById('section-toggle');
@@ -533,16 +616,11 @@ const imprintLink    = document.getElementById('imprint-link');
 const imprintOverlay = document.getElementById('imprint-overlay');
 const imprintClose   = document.getElementById('imprint-close');
 
-// ── Welcome / What's New popup ───────────────────────────────────────────────
-// Bump this date whenever the "What's New" bullets in index.html change to
-// re-show the popup to all returning visitors who previously dismissed it.
-const WELCOME_LAST_UPDATED = '2026-11-04';
-const WELCOME_STORAGE_KEY  = 'stlt-welcome-seen';
+// ── Welcome / What's New popup (only from Info ▸ What's New, never on startup) ─
 const welcomeLink     = document.getElementById('welcome-link');
 const welcomeOverlay  = document.getElementById('welcome-overlay');
 const welcomeClose    = document.getElementById('welcome-close');
 const welcomeGotIt    = document.getElementById('welcome-got-it');
-const welcomeDontShow = document.getElementById('welcome-dont-show');
 
 // ── Language selector DOM refs ────────────────────────────────────────────────────
 const languageSelector = document.querySelector('.lang-seg');
@@ -1249,7 +1327,6 @@ if (window.visualViewport) {
 }
 
 wireEvents();
-showWelcomeIfNeeded();
 // Sync scale number inputs with the slider's initial position
 scaleUVal.value = fmtScaleVal(posToScale(parseFloat(scaleUSlider.value)));
 scaleVVal.value = fmtScaleVal(posToScale(parseFloat(scaleVSlider.value)));
@@ -1454,28 +1531,14 @@ if (customMapRemoveBtn) {
 }
 
 // ── Welcome popup: open / dismiss ─────────────────────────────────────────────
-function openWelcome({ allowDismissPersist }) {
-  welcomeDontShow.checked = false;
+function openWelcome() {
   welcomeOverlay.classList.remove('hidden');
   trapFocus(welcomeOverlay);
 
-  const close = () => {
-    if (allowDismissPersist && welcomeDontShow.checked) {
-      try { localStorage.setItem(WELCOME_STORAGE_KEY, WELCOME_LAST_UPDATED); } catch { /* quota / private mode */ }
-    }
-    welcomeOverlay.classList.add('hidden');
-  };
+  const close = () => welcomeOverlay.classList.add('hidden');
   welcomeClose.onclick   = close;
   welcomeGotIt.onclick   = close;
   welcomeOverlay.onclick = (e) => { if (e.target === welcomeOverlay) close(); };
-}
-
-function showWelcomeIfNeeded() {
-  let seen = null;
-  try { seen = localStorage.getItem(WELCOME_STORAGE_KEY); } catch { /* private mode */ }
-  if (seen !== WELCOME_LAST_UPDATED) {
-    openWelcome({ allowDismissPersist: true });
-  }
 }
 
 // ── Accessibility: Modal focus trap ───────────────────────────────────────────
@@ -1846,6 +1909,15 @@ function wireEvents() {
     togglePlaceOnFace(!placeOnFaceActive);
   });
 
+  // ── Scale ──
+  for (const inp of document.querySelectorAll('#scale-model .scale-in')) {
+    inp.addEventListener('change', () => _onScaleInput(inp));
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
+  }
+  document.getElementById('scale-reset-btn').addEventListener('click', () => {
+    _applyModelScale({ x: 1 / modelScale.x, y: 1 / modelScale.y, z: 1 / modelScale.z });
+  });
+
   // ── Rotate ──
   rotateBtn.addEventListener('click', () => {
     toggleRotateMode(!rotateActive);
@@ -1863,6 +1935,7 @@ function wireEvents() {
     if (_rotatePoseSnapshot) {
       currentPoseRot.copy(_rotatePoseSnapshot.rot);
       currentPoseTrans.copy(_rotatePoseSnapshot.trans);
+      _geoMatrix.copy(_rotatePoseSnapshot.m);
     }
     currentGeometry.computeVertexNormals();
     if (currentGeometry.attributes.faceNormal) {
@@ -1900,7 +1973,7 @@ function wireEvents() {
   });
 
   // ── Welcome / What's New ──
-  welcomeLink.addEventListener('click', () => openWelcome({ allowDismissPersist: false }));
+  welcomeLink.addEventListener('click', () => openWelcome());
 
   // ── Mesh diagnostics dismiss ──
   meshDiagDismiss.addEventListener('click', () => {
@@ -1914,6 +1987,13 @@ function wireEvents() {
   document.getElementById('about-close').addEventListener('click', () => aboutOverlay.classList.add('hidden'));
   aboutOverlay.addEventListener('click', (e) => {
     if (e.target === aboutOverlay) aboutOverlay.classList.add('hidden');
+  });
+
+  // ── Tool rail: one step's settings at a time ──
+  initToolRail({
+    gallery,
+    onLeave: (step) => { if (step === 'mask' && exclusionTool) setExclusionTool(null); },
+    onShow: (step) => { _activeStep = step; _syncScaleGizmo(); },
   });
 
   // ── Menu bar: File ▸ Load model / Recent ──
@@ -1958,10 +2038,7 @@ function wireEvents() {
   exportBtn.addEventListener('click', () => startExport('stl'));
   export3mfBtn.addEventListener('click', () => startExport('3mf'));
 
-  // ── Advanced / Beta Features panel: collapse toggle + bake action ──
-  advancedToggle.addEventListener('click', () => {
-    advancedSection.classList.toggle('collapsed');
-  });
+  // ── Bake action ──
   bakeBtn.addEventListener('click', bakeTextures);
 
   // ── Texture layers ──
@@ -3669,6 +3746,7 @@ function _endStampDrag() {
 
 function togglePlaceOnFace(active) {
   placeOnFaceActive = active;
+  _syncScaleGizmo();
   placeOnFaceBtn.classList.toggle('active', active);
   setSectionHandlesLocked(!!exclusionTool || active);
 
@@ -3717,6 +3795,7 @@ function handlePlaceOnFaceClick(e) {
   // Compute quaternion that rotates faceNormal to -Z (face down on print bed)
   const targetDir = new THREE.Vector3(0, 0, -1);
   const quat = new THREE.Quaternion().setFromUnitVectors(faceNormal, targetDir);
+  _flushUndoCapture();   // a pending settings change stays its own undo step
 
   // Apply rotation to all vertex positions
   const pos = currentGeometry.attributes.position.array;
@@ -3732,6 +3811,7 @@ function handlePlaceOnFaceClick(e) {
   // Fold the rotation into the pose transform (undone again on export).
   currentPoseRot.premultiply(quat).normalize();
   currentPoseTrans.applyQuaternion(quat);
+  _geoMatrix.premultiply(_m4.makeRotationFromQuaternion(quat));
 
   // Re-center geometry
   currentGeometry.computeBoundingBox();
@@ -3739,6 +3819,7 @@ function handlePlaceOnFaceClick(e) {
   currentGeometry.boundingBox.getCenter(center);
   currentGeometry.translate(-center.x, -center.y, -center.z);
   currentPoseTrans.sub(center);
+  _geoMatrix.premultiply(_m4.makeTranslation(-center.x, -center.y, -center.z));
 
   // Recompute normals from scratch (fixes lighting + angle masking)
   currentGeometry.computeVertexNormals();
@@ -3821,12 +3902,14 @@ function handlePlaceOnFaceClick(e) {
 
   // Exit place-on-face mode
   togglePlaceOnFace(false);
+  if (_undoApplyDepth === 0) _commitUndoCapture();
 }
 
 // ── Rotate Mode ──────────────────────────────────────────────────────────────
 
 function toggleRotateMode(active) {
   rotateActive = active;
+  _syncScaleGizmo();
   rotateBtn.classList.toggle('active', active);
   rotateControls.classList.toggle('hidden', !active);
 
@@ -3839,7 +3922,8 @@ function toggleRotateMode(active) {
     // Snapshot original positions (and the matching pose transform) for reset
     if (currentGeometry) {
       _rotateOriginalPositions = new Float32Array(currentGeometry.attributes.position.array);
-      _rotatePoseSnapshot = { rot: currentPoseRot.clone(), trans: currentPoseTrans.clone() };
+      _rotatePoseSnapshot = { rot: currentPoseRot.clone(), trans: currentPoseTrans.clone(), m: _geoMatrix.clone() };
+      _flushUndoCapture();   // a pending settings change stays its own undo step
     }
     rotateAngles = { x: 0, y: 0, z: 0 };
     rotateXInput.value = '0'; rotateYInput.value = '0'; rotateZInput.value = '0';
@@ -3924,6 +4008,7 @@ function _rotateGeometry(quat) {
   // Fold the rotation into the pose transform (undone again on export).
   currentPoseRot.premultiply(quat).normalize();
   currentPoseTrans.applyQuaternion(quat);
+  _geoMatrix.premultiply(_m4.makeRotationFromQuaternion(quat));
 
   // Recompute normals
   currentGeometry.computeVertexNormals();
@@ -3941,7 +4026,7 @@ function _rotateGeometry(quat) {
   requestRender();
 }
 
-function _rotateFinalize() {
+function _rotateFinalize({ keepCamera = false } = {}) {
   if (!currentGeometry) return;
 
   // Re-center, folding the shift into the pose transform (undone on export).
@@ -3951,10 +4036,11 @@ function _rotateFinalize() {
   currentGeometry.translate(-center.x, -center.y, -center.z);
   currentGeometry.attributes.position.needsUpdate = true;
   currentPoseTrans.sub(center);
+  _geoMatrix.premultiply(_m4.makeTranslation(-center.x, -center.y, -center.z));
 
   // Full refresh
   currentBounds = computeBounds(currentGeometry);
-  loadGeometry(currentGeometry);
+  loadGeometry(currentGeometry, undefined, { keepCamera });
 
   // Geometry was reauthored (displacement baked in); cylinder silhouette
   // bitmap is stale. Settings are kept so the user's axis placement still
@@ -3983,6 +4069,11 @@ function _rotateFinalize() {
   checkAmplitudeWarning();
   checkResolutionWarning();
   updatePreview();
+  const b = currentBounds.size;
+  _setMeshInfo(getTriangleCount(currentGeometry),
+    (currentGeometry.attributes.position.array.byteLength / 1024 / 1024).toFixed(2),
+    b.x.toFixed(2), b.y.toFixed(2), b.z.toFixed(2));
+  if (_undoApplyDepth === 0) _commitUndoCapture();
 }
 
 function refreshExclusionOverlay() {
@@ -4225,6 +4316,8 @@ function loadDefaultCube() {
   currentBounds   = computeBounds(geo);
   currentPoseRot   = new THREE.Quaternion(); // authored at the origin — nothing to restore
   currentPoseTrans = new THREE.Vector3();
+  modelScale       = { x: 1, y: 1, z: 1 };
+  _geoMatrix.identity();
   currentStlName  = 'cube_50x50x50';
   currentStlExt   = '.stl';
   checkAmplitudeWarning();
@@ -4396,6 +4489,8 @@ async function handleModelFile(file, stepSettings = null) {
     currentBounds   = bounds;
     currentPoseRot   = new THREE.Quaternion();
     currentPoseTrans = originOffset ? originOffset.clone().negate() : new THREE.Vector3(); // mem = orig − centre
+    modelScale       = { x: 1, y: 1, z: 1 };
+    _geoMatrix.identity();
     currentStlName  = file.name.replace(/\.(stl|obj|3mf|step|stp)$/i, '');
     const _extMatch = file.name.match(/\.(stl|obj|3mf|step|stp)$/i);
     currentStlExt   = _extMatch ? _extMatch[0].toLowerCase() : '';
@@ -6702,6 +6797,7 @@ function adoptBakedGeometry(geometry, bounds, opts = {}) {
   currentGeometry = geometry;
   currentBounds   = bounds;
   currentStlName  = `${currentStlName}_baked`;
+  _geoMatrix.identity();   // the baked mesh is the new starting point (undo history is cleared below)
   checkAmplitudeWarning();
 
   geometry = currentGeometry;
@@ -7816,13 +7912,23 @@ function _captureUndoSnapshot() {
           mapEntry: L.mapEntry, includeOnly: !!L.includeOnly, maskModeChosen: !!L.maskModeChosen,
           visible: L.visible, blendAdd: L.blendAdd })),
     paint: paintTree ? paintTree.serialize() : null,
+    // Rotate / place on face / scale are baked into the geometry; undo moves it back
+    geo: { m: _geoMatrix.clone(), rot: currentPoseRot.clone(), trans: currentPoseTrans.clone(), scale: { ...modelScale } },
   };
+}
+
+function _sameGeo(a, b) {
+  if (!a || !b) return a === b;
+  const ea = a.m.elements, eb = b.m.elements;
+  for (let i = 0; i < 16; i++) if (Math.abs(ea[i] - eb[i]) > 1e-6) return false;
+  return true;
 }
 
 function _undoSnapshotsEqual(a, b) {
   if (a === b) return true;
   if (!a || !b) return false;
   if (a.active !== b.active || a.layers.length !== b.layers.length) return false;
+  if (!_sameGeo(a.geo, b.geo)) return false;
   for (const k of GLOBAL_KEYS) {
     if (a.global[k] !== b.global[k]) return false;
   }
@@ -7845,6 +7951,8 @@ function _commitUndoCapture() {
   // A stroke in progress commits on its own mouseup; a debounced capture from
   // just before it must not cut the stroke into two steps.
   if (isPainting) { _scheduleUndoCapture(); return; }
+  // Rotate mode commits once, when it closes (_rotateFinalize).
+  if (rotateActive) return;
   const next = _captureUndoSnapshot();
   if (_baselineSnapshot && _undoSnapshotsEqual(_baselineSnapshot, next)) return;
   if (_baselineSnapshot) {
@@ -7881,6 +7989,7 @@ function _clearUndoStacks() {
 function _applyUndoSnapshot(snap) {
   _undoApplyDepth++;
   try {
+    if (currentGeometry && snap.geo && !_sameGeo(snap.geo, { m: _geoMatrix })) _restoreGeoState(snap.geo);
     layers = snap.layers.map(l => ({
       id: l.id, settings: { ...l.settings }, mapName: l.mapName, customId: l.customId,
       mapEntry: l.mapEntry, includeOnly: !!l.includeOnly, maskModeChosen: !!l.maskModeChosen,
@@ -7903,6 +8012,23 @@ function _applyUndoSnapshot(snap) {
   } finally {
     _undoApplyDepth--;
   }
+}
+
+/** Move the mesh to a recorded state (undo/redo of rotate, place on face, scale). */
+function _restoreGeoState(g) {
+  if (rotateActive) toggleRotateMode(false);
+  if (placeOnFaceActive) togglePlaceOnFace(false);
+  const delta = g.m.clone().multiply(_m4.copy(_geoMatrix).invert());
+  currentGeometry.applyMatrix4(delta);
+  if (currentGeometry.attributes.faceNormal) currentGeometry.deleteAttribute('faceNormal');
+  currentGeometry.computeVertexNormals();
+  _geoMatrix.copy(g.m);
+  currentPoseRot.copy(g.rot);
+  currentPoseTrans.copy(g.trans);
+  modelScale = { ...g.scale };
+  exportToken++;
+  _clearColorResult();
+  _rotateFinalize({ keepCamera: true });   // full refresh; the re-centre shift is ~0 here
 }
 
 function _undo() {

@@ -614,5 +614,7 @@ export function initTextureGallery({ onSelect, onSelectCustom, setTurntable }) {
     rememberUpload,
     refreshCustoms,
     refreshText,
+    isOpen,
+    close: closeGallery,
   };
 }

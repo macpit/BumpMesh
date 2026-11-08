@@ -548,6 +548,7 @@ export function initViewer(canvas) {
 
   // Rotation gizmo interaction
   _initGizmoInteraction();
+  _initScaleGizmoInteraction();
 
   _section = new SectionController({
     scene,
@@ -816,7 +817,7 @@ function disposeGroup(group) {
  * @param {THREE.BufferGeometry} geometry
  * @param {THREE.Material} [material] – if omitted, a default material is used
  */
-export function loadGeometry(geometry, material) {
+export function loadGeometry(geometry, material, { keepCamera = false } = {}) {
   // Clear previous mesh
   while (meshGroup.children.length) {
     const old = meshGroup.children[0];
@@ -854,7 +855,7 @@ export function loadGeometry(geometry, material) {
   const sphere = new THREE.Sphere();
   geometry.computeBoundingSphere();
   sphere.copy(geometry.boundingSphere);
-  fitCamera(sphere);
+  if (!keepCamera) fitCamera(sphere);
 
   // Place coordinate axes away from the part corner
   if (axesGroup) { disposeGroup(axesGroup); scene.remove(axesGroup); }
@@ -1460,7 +1461,180 @@ export function updateRotationGizmo() {
  * (so main.js can suppress other mouse handlers).
  */
 export function isGizmoDragging() {
-  return _rotGizmoDragging !== null || !!_section?.dragging;
+  return _rotGizmoDragging !== null || _scaleDrag !== null || !!_section?.dragging;
+}
+
+// ── Scale Gizmo ──────────────────────────────────────────────────────────────
+// Handles on the model's bounding box like the slicers' scale tool: the four
+// bottom corners (cyan) always scale uniformly, the edge midpoints (red X,
+// green Y) and the top centre (blue Z) scale one axis, or all three when
+// uniform scaling is on. Dragging previews by scaling the mesh object; on
+// release the factor goes to onCommit, which bakes it into the geometry.
+
+let _scaleGroup = null;
+let _scaleVisible = false;
+let _scaleDrag = null;     // { kind, axis, c2, h2, f }
+let _scaleOpts = null;     // { onCommit(f), uniform() }
+const SCALE_COLORS = { corner: 0x2ad4e0, x: 0xff3b3b, y: 0x2fcf4f, z: 0x3a6bff };
+
+function _scaleBox() {
+  const box = new THREE.Box3();
+  if (!currentMesh) return box;
+  currentMesh.geometry.computeBoundingBox();
+  box.copy(currentMesh.geometry.boundingBox);
+  return box;
+}
+
+function _buildScaleGizmo() {
+  if (_scaleGroup) return;
+  _scaleGroup = new THREE.Group();
+  _scaleGroup.renderOrder = 101;
+  const cube = new THREE.BoxGeometry(1, 1, 1);
+  const mk = (kind, axis, color) => {
+    const m = new THREE.Mesh(cube, new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true }));
+    m.renderOrder = 102;
+    m.userData = { kind, axis, color };
+    _scaleGroup.add(m);
+    return m;
+  };
+  for (let i = 0; i < 4; i++) mk('corner', null, SCALE_COLORS.corner);
+  mk('axis', 'x', SCALE_COLORS.x); mk('axis', 'x', SCALE_COLORS.x);
+  mk('axis', 'y', SCALE_COLORS.y); mk('axis', 'y', SCALE_COLORS.y);
+  mk('axis', 'z', SCALE_COLORS.z);
+  const lineMat = (color) => new THREE.LineDashedMaterial({ color, dashSize: 1, gapSize: 0.6, depthTest: false, transparent: true, opacity: 0.9 });
+  const frame = new THREE.LineSegments(new THREE.BufferGeometry(), lineMat(0xffffff));
+  frame.userData.frame = true;
+  frame.renderOrder = 101;
+  _scaleGroup.add(frame);
+  scene.add(_scaleGroup);
+}
+
+/** Place the handles on the (optionally preview-scaled) bounding box. */
+function _layoutScaleGizmo(f = { x: 1, y: 1, z: 1 }) {
+  if (!_scaleGroup || !currentMesh) return;
+  const box = _scaleBox();
+  const c = box.getCenter(new THREE.Vector3());
+  const h = box.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+  h.set(h.x * f.x, h.y * f.y, h.z * f.z);
+  const z0 = c.z - h.z, z1 = c.z + h.z;
+  const pad = Math.max(h.x, h.y) * 0.08;
+  const x0 = c.x - h.x - pad, x1 = c.x + h.x + pad, y0 = c.y - h.y - pad, y1 = c.y + h.y + pad;
+  const size = Math.max(h.x, h.y, h.z) * 0.06;
+  const pos = [
+    [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],   // corners
+    [x1, c.y, z0], [x0, c.y, z0],                             // ±X
+    [c.x, y1, z0], [c.x, y0, z0],                             // ±Y
+    [c.x, c.y, z1],                                           // Z
+  ];
+  const handles = _scaleGroup.children.filter(o => o.isMesh);
+  handles.forEach((m, i) => { m.position.set(...pos[i]); m.scale.setScalar(size); });
+  const frame = _scaleGroup.children.find(o => o.userData.frame);
+  const pts = [];
+  const ring = pos.slice(0, 4);
+  for (let i = 0; i < 4; i++) pts.push(...ring[i], ...ring[(i + 1) % 4]);
+  pts.push(x0, c.y, z0, x1, c.y, z0, c.x, y0, z0, c.x, y1, z0);
+  frame.geometry.dispose();
+  frame.geometry = new THREE.BufferGeometry();
+  frame.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  frame.computeLineDistances();
+  frame.material.dashSize = size * 0.8;
+  frame.material.gapSize = size * 0.5;
+}
+
+/**
+ * Show/hide the scale handles.
+ * @param {boolean} visible
+ * @param {{ onCommit: (f:{x,y,z}) => void, uniform: () => boolean }} [opts]
+ */
+export function setScaleGizmo(visible, opts = null) {
+  _scaleVisible = visible && !!currentMesh;
+  if (opts) _scaleOpts = opts;
+  if (_scaleVisible) {
+    _buildScaleGizmo();
+    _layoutScaleGizmo();
+    _scaleGroup.visible = true;
+  } else if (_scaleGroup) {
+    _scaleGroup.visible = false;
+    if (_scaleDrag) { meshGroup.scale.set(1, 1, 1); _scaleDrag = null; controls.enabled = true; }
+  }
+  requestRender();
+}
+
+/** Re-place the handles after the geometry changed. */
+export function updateScaleGizmo() {
+  if (_scaleVisible && _scaleGroup && !_scaleDrag) { _layoutScaleGizmo(); requestRender(); }
+}
+
+function _toScreen(v, rect) {
+  const p = v.clone().project(camera);
+  return new THREE.Vector2((p.x + 1) / 2 * rect.width, (1 - p.y) / 2 * rect.height);
+}
+
+function _initScaleGizmoInteraction() {
+  const canvas = renderer.domElement;
+  const ray = new THREE.Raycaster();
+  let hovered = null;
+
+  const pick = (e) => {
+    if (!_scaleGroup || !_scaleVisible) return null;
+    const rect = canvas.getBoundingClientRect();
+    ray.setFromCamera({ x: ((e.clientX - rect.left) / rect.width) * 2 - 1, y: -((e.clientY - rect.top) / rect.height) * 2 + 1 }, camera);
+    const hit = ray.intersectObjects(_scaleGroup.children.filter(o => o.isMesh), false)[0];
+    return hit ? hit.object : null;
+  };
+
+  const setHover = (m) => {
+    if (m === hovered) return;
+    if (hovered) hovered.material.color.set(hovered.userData.color);
+    hovered = m;
+    if (m) m.material.color.set(0xffffff);
+    canvas.style.cursor = m ? 'grab' : '';
+    requestRender();
+  };
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !_scaleVisible) return;
+    const m = pick(e);
+    if (!m) return;
+    e.stopPropagation();
+    e.preventDefault();
+    controls.enabled = false;
+    const rect = canvas.getBoundingClientRect();
+    const c = _scaleBox().getCenter(new THREE.Vector3());
+    const c2 = _toScreen(c, rect);
+    const h2 = _toScreen(m.position, rect).sub(c2);
+    if (h2.lengthSq() < 4) { controls.enabled = true; return; }
+    _scaleDrag = { kind: m.userData.kind, axis: m.userData.axis, c2, h2, f: { x: 1, y: 1, z: 1 } };
+    canvas.style.cursor = 'grabbing';
+  }, { capture: true });
+
+  document.addEventListener('pointermove', (e) => {
+    if (!_scaleVisible) return;
+    if (!_scaleDrag) { setHover(pick(e)); return; }
+    const rect = canvas.getBoundingClientRect();
+    const p = new THREE.Vector2(e.clientX - rect.left, e.clientY - rect.top).sub(_scaleDrag.c2);
+    const d = _scaleDrag;
+    let k = p.dot(d.h2) / d.h2.lengthSq();
+    k = Math.max(0.02, k);
+    const uniform = d.kind === 'corner' || (_scaleOpts?.uniform?.() ?? true);
+    d.f = uniform ? { x: k, y: k, z: k } : { x: 1, y: 1, z: 1, [d.axis]: k };
+    meshGroup.scale.set(d.f.x, d.f.y, d.f.z);
+    _layoutScaleGizmo(d.f);
+    _scaleOpts?.onPreview?.(d.f);
+    requestRender();
+  });
+
+  document.addEventListener('pointerup', () => {
+    if (!_scaleDrag) return;
+    const f = _scaleDrag.f;
+    _scaleDrag = null;
+    controls.enabled = true;
+    meshGroup.scale.set(1, 1, 1);
+    canvas.style.cursor = hovered ? 'grab' : '';
+    if (Math.abs(f.x - 1) > 1e-4 || Math.abs(f.y - 1) > 1e-4 || Math.abs(f.z - 1) > 1e-4) _scaleOpts?.onCommit?.(f);
+    else _layoutScaleGizmo();
+    requestRender();
+  });
 }
 
 // Hit-test the gizmo rings. Returns axis string or null.
