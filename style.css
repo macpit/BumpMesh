@@ -485,26 +485,26 @@ main {
 }
 
 #viewport-footer {
-  min-height: 28px;
+  min-height: 34px;
   background: var(--surface);
   border-top: 1px solid var(--border);
   display: flex;
   flex-wrap: wrap;   /* a narrow viewport gets a second row instead of clipped text */
   align-items: center;
-  padding: 4px 12px;
-  gap: 2px 16px;
+  padding: 5px 12px;
+  gap: 4px 18px;
   flex-shrink: 0;
 }
 
 .mesh-info {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .viewport-controls-hint {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -516,8 +516,8 @@ main {
 .wireframe-toggle {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 11px;
+  gap: 6px;
+  font-size: 13px;
   color: var(--text-muted);
   cursor: pointer;
   user-select: none;
@@ -532,15 +532,15 @@ main {
 }
 .section-controls.hidden { display: none; }
 .section-btn {
-  height: 20px;
-  min-width: 24px;
+  height: 24px;
+  min-width: 28px;
   padding: 0 7px;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-left: none;
   color: var(--text-muted);
   font-family: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1;
   cursor: pointer;

@@ -211,6 +211,14 @@
       </div>
       <div id="viewport-footer">
         <span id="mesh-info" class="mesh-info"></span>
+        <label class="wireframe-toggle" for="displacement-preview"
+          data-i18n-title="tooltips.displacementPreview"
+          title="Subdivides the mesh and displaces vertices in real-time so you can judge the actual depth. GPU-intensive on complex models.">
+          <input type="checkbox" id="displacement-preview" />
+          <span data-i18n="labels.displacementPreview">3D Preview ⓘ</span>
+          <span id="displacement-preview-spinner" class="mesh-diag-spinner hidden"
+            data-i18n-title="progress.subdividingPreview" title="Preparing preview…"></span>
+        </label>
         <label class="wireframe-toggle">
           <input type="checkbox" id="wireframe-toggle" />
           <span data-i18n="ui.wireframe">Wireframe</span>
@@ -515,16 +523,6 @@
             <input type="checkbox" id="symmetric-displacement" />
             <span data-i18n="labels.symmetricDisplacement">Symmetric displacement ⓘ</span>
           </label>
-        </div>
-        <div class="form-row">
-          <label class="checkbox-label" for="displacement-preview"
-            data-i18n-title="tooltips.displacementPreview"
-            title="Subdivides the mesh and displaces vertices in real-time so you can judge the actual depth. GPU-intensive on complex models.">
-            <input type="checkbox" id="displacement-preview" />
-            <span data-i18n="labels.displacementPreview">3D Preview ⓘ</span>
-          </label>
-          <span id="displacement-preview-spinner" class="mesh-diag-spinner hidden"
-            data-i18n-title="progress.subdividingPreview" title="Preparing preview…"></span>
         </div>
       </section>
 
