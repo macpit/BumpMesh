@@ -51,6 +51,7 @@ import { QuantizedPointMap } from './meshIndex.js';
 import { APP_VERSION } from './version.js';
 import { initMenuBar } from './menuBar.js';
 import { initToolRail } from './toolRail.js';
+import { confirmDialog as _confirmDialog } from './confirmDialog.js';
 import { listRecent, addRecent, getRecent, clearRecent } from './recentFiles.js';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 
@@ -7573,45 +7574,6 @@ function resetSettingsToDefaults() {
     _baselineSnapshot = _captureUndoSnapshot();
     _updateUndoButtons();
   }
-}
-
-/**
- * In-app yes/no dialog. window.confirm is unreliable (embedded browsers drop
- * it and answer "cancel"), so questions that guard an action use this.
- * Resolves true for OK, false for Cancel, Escape or a click beside it.
- */
-function _confirmDialog(message, okLabel = t('dialog.ok')) {
-  return new Promise((resolve) => {
-    const overlay = document.createElement('div');
-    overlay.className = 'license-overlay';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-modal', 'true');
-    const box = document.createElement('div');
-    box.className = 'license-modal confirm-modal';
-    const p = document.createElement('p');
-    p.className = 'confirm-text';
-    p.textContent = message;
-    const row = document.createElement('div');
-    row.className = 'confirm-buttons';
-    const cancel = document.createElement('button');
-    cancel.type = 'button'; cancel.className = 'scale-reset-btn confirm-cancel'; cancel.textContent = t('dialog.cancel');
-    const ok = document.createElement('button');
-    ok.type = 'button'; ok.className = 'export-go-btn confirm-ok'; ok.textContent = okLabel;
-    row.append(cancel, ok);
-    box.append(p, row);
-    overlay.append(box);
-    document.body.append(overlay);
-    const done = (v) => { overlay.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
-    const onKey = (e) => {
-      if (e.key === 'Escape') { e.stopPropagation(); done(false); }
-      else if (e.key === 'Enter') { e.preventDefault(); done(true); }
-    };
-    cancel.onclick = () => done(false);
-    ok.onclick = () => done(true);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) done(false); });
-    document.addEventListener('keydown', onKey, true);
-    ok.focus();
-  });
 }
 
 const resetSettingsBtn = document.getElementById('reset-settings-btn');

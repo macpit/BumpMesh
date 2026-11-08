@@ -8,6 +8,7 @@ export default {
   "theme.light": "Helles Design",
   "theme.toggleTitle": "Hell/Dunkel-Modus wechseln",
   "theme.toggleAriaLabel": "Hell/Dunkel-Modus wechseln",
+  "dialog.delete": "Löschen",
   "dialog.ok": "OK",
   "dialog.cancel": "Abbrechen",
   "dialog.reset": "Zurücksetzen",

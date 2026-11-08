@@ -8,6 +8,7 @@ export default {
   "theme.light": "Light Theme",
   "theme.toggleTitle": "Toggle light / dark mode",
   "theme.toggleAriaLabel": "Toggle light/dark mode",
+  "dialog.delete": "Delete",
   "dialog.ok": "OK",
   "dialog.cancel": "Cancel",
   "dialog.reset": "Reset",

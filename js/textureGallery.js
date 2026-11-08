@@ -14,6 +14,7 @@ import { IMAGE_PRESETS, PRESET_CATEGORIES, DEFAULT_FAVOURITES } from './presetTe
 import { listCustomTextures, saveCustomTexture, deleteCustomTexture, clearCustomTextures,
          downloadCustomTexture } from './customTextures.js';
 import { t } from './i18n.js';
+import { confirmDialog } from './confirmDialog.js';
 
 const FAV_KEY = 'bumpmesh-favourites';
 const TURNTABLE_KEY = 'bumpmesh-gallery-turntable';
@@ -463,13 +464,13 @@ export function initTextureGallery({ onSelect, onSelectCustom, setTurntable }) {
   }
 
   async function deleteCustom(meta) {
-    if (!confirm(t('gallery.confirmDeleteCustom', { name: meta.name }))) return;
+    if (!(await confirmDialog(t('gallery.confirmDeleteCustom', { name: meta.name }), t('dialog.delete')))) return;
     try { await deleteCustomTexture(meta.id); } catch (err) { console.warn('Could not delete custom texture:', err); }
     await refreshCustoms();
   }
 
   async function deleteAllCustom() {
-    if (!confirm(t('gallery.confirmDeleteAllCustom', { n: customs.length }))) return;
+    if (!(await confirmDialog(t('gallery.confirmDeleteAllCustom', { n: customs.length }), t('dialog.delete')))) return;
     try { await clearCustomTextures(); } catch (err) { console.warn('Could not delete custom textures:', err); }
     await refreshCustoms();
   }
