@@ -82,6 +82,12 @@ A new step in the tool rail for motifs that are placed, not tiled. Every ornamen
 - **Removing a layer** no longer hands its painted mask to the layer after it.
 - **Paint filaments** — clicking the active filament chip a second time stops painting.
 
+### Speed
+- **Ornament sliders** update the preview after a short pause while dragging, like every other slider, instead of recomputing on every tick (line growing, ring unwrap, depth map).
+- **Masks** are sent to the graphics card only when a mask, a painted filament or the layer order changed, not on every preview update.
+- **Picking** on models from 20,000 triangles uses a bounds tree ([three-mesh-bvh](https://github.com/gkjohnson/three-mesh-bvh)): hovering a stamp, painting and grabbing stay smooth on large meshes and in the 3D preview.
+- **Height lines** follow the mouse once per frame; ring strips, grown lines and the bowl table are kept per layer setting, so two layers with the same image no longer recompute each other's maps, and replaced textures are freed.
+
 ### Hosting
 - **GitHub Pages** — every push publishes the app to https://macpit.github.io/BumpMesh/. The imprint names this fork's operator, not CNC Kitchen.
 
@@ -282,6 +288,7 @@ Loaded via CDN ([jsDelivr](https://www.jsdelivr.com/)) — no build step or npm 
 | — [OBJLoader](https://threejs.org/docs/#examples/en/loaders/OBJLoader) | 0.170.0 | MIT | OBJ mesh import |
 | — [LineSegments2 / LineSegmentsGeometry / LineMaterial](https://threejs.org/docs/#examples/en/lines/LineSegments2) | 0.170.0 | MIT | Wide-line wireframe overlay |
 | [fflate](https://github.com/101arrowz/fflate) | 0.8.2 | MIT | ZIP compression & decompression for 3MF import/export |
+| [three-mesh-bvh](https://github.com/gkjohnson/three-mesh-bvh) | 0.8.3 | MIT | Bounds tree for picking on large meshes (added by the fork) |
 
 All dependencies are MIT-licensed.
 

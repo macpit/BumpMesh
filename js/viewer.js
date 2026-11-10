@@ -9,6 +9,35 @@ import { LineSegments2 }  from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial }   from 'three/addons/lines/LineMaterial.js';
 import { SectionController } from './section.js';
+import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
+
+// Picking (stamp hover, brush, pivot) tests a ray against the shown mesh on
+// every mouse move. Past a few thousand triangles a bounds tree answers that
+// in a fraction of the time; it is built on the first ray after the geometry
+// or its positions changed. `indirect` leaves the geometry untouched (no
+// index is added, face indices stay the triangle order).
+const BVH_MIN_TRIS = 20000;
+const _bvhState = new WeakMap();   // geometry → { attr, version }
+function _bvhRaycast(raycaster, intersects) {
+  const g = this.geometry, pa = g.attributes.position;
+  const tris = (g.index ? g.index.count : pa.count) / 3;
+  if (tris < BVH_MIN_TRIS) {
+    g.boundsTree = null;
+    return THREE.Mesh.prototype.raycast.call(this, raycaster, intersects);
+  }
+  const st = _bvhState.get(g);
+  if (!g.boundsTree || !st || st.attr !== pa || st.version !== pa.version) {
+    try {
+      g.boundsTree = new MeshBVH(g, { indirect: true });
+      _bvhState.set(g, { attr: pa, version: pa.version });
+    } catch (err) {
+      console.warn('Bounds tree failed, picking without it:', err);
+      g.boundsTree = null;
+      return THREE.Mesh.prototype.raycast.call(this, raycaster, intersects);
+    }
+  }
+  return acceleratedRaycast.call(this, raycaster, intersects);
+}
 
 // Pre-allocated temp objects for hot-path event handlers (avoid GC pressure)
 const _tmpQ1 = new THREE.Quaternion();
@@ -839,6 +868,7 @@ export function loadGeometry(geometry, material, { keepCamera = false } = {}) {
   if (!geometry.attributes.normal) geometry.computeVertexNormals();
 
   currentMesh = new THREE.Mesh(geometry, _clip(mat));
+  currentMesh.raycast = _bvhRaycast;
   currentMesh.castShadow = true;
   currentMesh.receiveShadow = true;
   meshGroup.add(currentMesh);

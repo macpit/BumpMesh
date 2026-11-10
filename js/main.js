@@ -80,6 +80,7 @@ const _bowlLinesDetectCache = new WeakMap();
 let _bowlLineGroup = null;
 let _bowlLinesShown = true;
 let _bowlDrag = null;        // { k, off } while a line is dragged
+let _bowlDragRaf = 0, _bowlDragEvent = null;   // the drag follows once per frame
 let _keepCameraNext   = false;  // scale/undo: the next material reload keeps the view
 let modelScale        = { x: 1, y: 1, z: 1 };   // Model ▸ Scale, relative to the size the model was loaded with
 // Every move of the loaded geometry (rotate, place on face, scale, re-centre)
@@ -113,6 +114,7 @@ let paintTree          = null;
 let paintGeometry      = null;        // flattened tree mesh, or null when no face is split
 let paintFlat          = null;        // paintTree.flatten() result behind paintGeometry
 let _paintStructureVersion = -1;
+let _faceMaskSig = null;   // what updateFaceMask last wrote into the mask attributes (identities)
 let _paintCoverCache   = new Map();   // per (slot, geometry): paint arrays for the current paintVersion
 let triangleAdjacency  = null;        // Array from buildAdjacency
 let triangleCentroids  = null;        // Float32Array from buildAdjacency
@@ -2353,7 +2355,15 @@ function wireEvents() {
   let _hoverRafId = 0;
 
   canvas.addEventListener('mousemove', (e) => {
-    if (_bowlDrag) { _bowlLineDragMove(e); return; }
+    if (_bowlDrag) {
+      // Once per frame: a fast mouse sends several moves in one.
+      _bowlDragEvent = e;
+      if (!_bowlDragRaf) _bowlDragRaf = requestAnimationFrame(() => {
+        _bowlDragRaf = 0;
+        if (_bowlDrag && _bowlDragEvent) _bowlLineDragMove(_bowlDragEvent);
+      });
+      return;
+    }
     if (_bowlLinesVisible()) canvas.style.cursor = _bowlLineAt(e) >= 0 ? 'ns-resize' : '';
     // Paint-Events sofort verarbeiten (jeder Event zaehlt fuer lueckenloses Malen)
     if (isPainting && exclusionTool === 'brush') {
@@ -3971,6 +3981,8 @@ function _bowlLineDragMove(e) {
 
 function _endBowlLineDrag() {
   if (!_bowlDrag) return;
+  if (_bowlDragRaf) { cancelAnimationFrame(_bowlDragRaf); _bowlDragRaf = 0; if (_bowlDragEvent) _bowlLineDragMove(_bowlDragEvent); }
+  _bowlDragEvent = null;
   if (_bowlDrag.off) settings.stampBowlLines.splice(_bowlDrag.k, 1);   // dragged off the model: gone
   _bowlDrag = null;
   getControls().enabled = true;
@@ -4222,7 +4234,16 @@ function _wireOrnaments() {
   const apply = () => { _syncOrnamentUI(); updatePreview(); _autoSaveSettings(); };
   const pair = (rangeId, valId, set) => {
     const r = document.getElementById(rangeId), v = document.getElementById(valId);
-    r.addEventListener('input', () => { set(parseFloat(r.value)); apply(); });
+    // Dragging: like every other slider (linkSlider) the preview follows
+    // after a short pause — a tick can mean a new line-grow pass, ring
+    // unwrap and depth map.
+    r.addEventListener('input', () => {
+      set(parseFloat(r.value));
+      _syncOrnamentUI();
+      clearTimeout(previewDebounce);
+      previewDebounce = setTimeout(updatePreview, 80);
+      _autoSaveSettings();
+    });
     v.addEventListener('change', () => { set(parseFloat(v.value)); apply(); });
   };
   pair('orn-repeats', 'orn-repeats-val', (n) => {
@@ -4413,10 +4434,19 @@ function _stampDepthFor(i, frame) {
   const res = _stampFastDepth ? STAMP_DEPTH_RES_FAST : STAMP_DEPTH_RES;
   const key = [currentGeometry.uuid, pa.version, pa.count, res, frame.mode, frame.side, frame.cx, frame.cy, frame.cz,
     frame.nx, frame.ny, frame.nz, frame.sizeU, frame.sizeV, frame.cosR, frame.sinR, frame.ccx, frame.ccy, frame.r, frame.wrap ? 1 : 0].join(',');
+  // Depth maps of layers that are gone.
+  if (_stampDepthCache.size > layers.length) {
+    for (const [id, old] of _stampDepthCache) {
+      if (!layers.some(l => l.id === id)) { old.texture.dispose(); _stampDepthCache.delete(id); }
+    }
+  }
   const cached = _stampDepthCache.get(L.id);
   if (cached && cached.key === key) return cached;
   const depth = buildStampDepth(pa.array, frame, res);
-  if (!depth) return null;   // border: no occlusion map
+  if (!depth) {   // border, bowl ring: no occlusion map
+    if (cached) { cached.texture.dispose(); _stampDepthCache.delete(L.id); }
+    return null;
+  }
   const texture = new THREE.DataTexture(depth.data, depth.nu, depth.nv, THREE.RedFormat, THREE.FloatType);
   texture.minFilter = texture.magFilter = THREE.NearestFilter;
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
@@ -5885,29 +5915,44 @@ function updateFaceMask(geometry, { forceFalloff = false } = {}) {
     hards.push(r.hardMasked);
   }
 
-  // Painted filaments (Colors ▸ Paint filaments): flat per face, 0 = none.
-  const filAttr = _ensureAttr(geometry, 'filamentId', posCount, 1, 0.0);
-  const fil = _filamentFacesOn(geometry);
-  filAttr.array.fill(0);
-  if (fil) for (let t = 0; t < fil.length; t++) if (fil[t]) filAttr.array.fill(fil[t], t * 3, t * 3 + 3);
-  filAttr.needsUpdate = true;
-  const painted = !!fil && fil.some(v => v > 0);
-  if (painted !== _filamentPainted) {
-    _filamentPainted = painted;
-    queueMicrotask(() => _renderFilamentColors());   // material, result button, chips
+  // The two per-corner attributes below are megabytes on a 3D-preview mesh:
+  // refill and re-upload them only when a mask, a painted filament or the
+  // slot assignment changed (the paint caches hand out a new array then), not
+  // on every slider tick.
+  const filSrc = [];
+  if (paintTree) for (const id of FILAMENT_PAINT_IDS) {
+    const slot = paintTree.layerSlot(id);
+    filSrc.push(slot >= 0 && paintTree.hasPaint(slot) ? _layerPaintOn(slot, geometry) : null);
   }
-
-  const maskAttr = _ensureAttr(geometry, 'layerMask', posCount, 4, 0.0);
-  const m = maskAttr.array;
-  const nSlots = covers.length;
-  for (let i = 0; i < posCount; i++) {
-    const o = i * 4;
-    for (let k = 0; k < 4; k++) {
-      const c = covers[k];
-      m[o + k] = k < nSlots ? (c ? c[i] : 1) : 0;
+  const sig = [geometry, geometry.getAttribute('filamentId'), geometry.getAttribute('layerMask'), covers.length, ...covers, ...filSrc];
+  const same = !!sig[1] && !!sig[2] && _faceMaskSig && _faceMaskSig.length === sig.length && sig.every((v, k) => v === _faceMaskSig[k]);
+  if (!same) {
+    // Painted filaments (Colors ▸ Paint filaments): flat per face, 0 = none.
+    const filAttr = _ensureAttr(geometry, 'filamentId', posCount, 1, 0.0);
+    const fil = _filamentFacesOn(geometry);
+    filAttr.array.fill(0);
+    if (fil) for (let t = 0; t < fil.length; t++) if (fil[t]) filAttr.array.fill(fil[t], t * 3, t * 3 + 3);
+    filAttr.needsUpdate = true;
+    const painted = !!fil && fil.some(v => v > 0);
+    if (painted !== _filamentPainted) {
+      _filamentPainted = painted;
+      queueMicrotask(() => _renderFilamentColors());   // material, result button, chips
     }
+
+    const maskAttr = _ensureAttr(geometry, 'layerMask', posCount, 4, 0.0);
+    const m = maskAttr.array;
+    const nSlots = covers.length;
+    for (let i = 0; i < posCount; i++) {
+      const o = i * 4;
+      for (let k = 0; k < 4; k++) {
+        const c = covers[k];
+        m[o + k] = k < nSlots ? (c ? c[i] : 1) : 0;
+      }
+    }
+    maskAttr.needsUpdate = true;
+    sig[1] = filAttr; sig[2] = maskAttr;
+    _faceMaskSig = sig;
   }
-  maskAttr.needsUpdate = true;
 
   // Ensure faceNormal attribute exists (needed by shader for angle masking).
   // For the original geometry normal == faceNormal; for subdivided geometry
@@ -6290,11 +6335,11 @@ function syncBoundaryEdgeUniforms() {
 // stampLineGrow (mm) widens the pattern's bright parts (lineGrow.js) so thin
 // single-line SVGs print; the grown map feeds both the preview and the export.
 // One cached result per source map, rebuilt when the radius in pixels changes.
-const _grownMapCache = new WeakMap();   // source imageData → { key, entry }
+const _grownMapCache = new WeakMap();   // source imageData → key → grown entry
 
 // Ornaments ▸ Ring around the wall: the round image rolled out into a strip
 // (ringUnwrap.js), one per source map.
-const _ringMapCache = new WeakMap();   // source imageData → { flip, entry }
+const _ringMapCache = new WeakMap();   // source imageData → 'plain' | 'flip' → strip entry
 
 /**
  * A flat ring's drawn radii as shares of half the image (stampRingInner /
@@ -6302,7 +6347,27 @@ const _ringMapCache = new WeakMap();   // source imageData → { flip, entry }
  */
 // Ornaments ▸ Ring over the bowl: the model's arc-length table (bowlProfile.js),
 // rebuilt when the geometry or the axis changes; its texture feeds the shader.
-let _bowlCache = null;   // { key, table, texture }
+/**
+ * Derived maps (ring strip, grown lines, bowl table) per source and settings:
+ * several layers can share one image with different settings, so each source
+ * keeps a few results (most recently used last). A result that drops out is
+ * no longer bound by any layer; its texture is freed shortly after.
+ */
+function _derived(cache, source, key, make) {
+  let m = cache.get(source);
+  if (!m) { m = new Map(); cache.set(source, m); }
+  const hit = m.get(key);
+  if (hit) { m.delete(key); m.set(key, hit); return hit; }
+  const out = make();
+  m.set(key, out);
+  while (m.size > MAX_LAYERS) {
+    const [k, old] = m.entries().next().value;
+    m.delete(k);
+    setTimeout(() => old.texture?.dispose(), 2000);
+  }
+  return out;
+}
+const _bowlCache = new WeakMap();   // base geometry → key → { key, table, texture }
 function _bowlTableFor(i) {
   const L = layers[i];
   const s = L ? (i === activeLayer ? settings : L.settings) : null;
@@ -6310,17 +6375,15 @@ function _bowlTableFor(i) {
   const pa = currentGeometry.attributes.position;
   const cx = s.cylinderCenterX ?? currentBounds.center.x, cy = s.cylinderCenterY ?? currentBounds.center.y;
   const key = `${currentGeometry.uuid}_${pa.version}_${pa.count}_${cx}_${cy}`;
-  if (_bowlCache && _bowlCache.key === key) return _bowlCache;
+  return _derived(_bowlCache, currentGeometry, key, () => {
   const table = buildBowlTable(pa.array, cx, cy);
   const texture = new THREE.DataTexture(table.data, table.nr, table.nz, THREE.RedFormat, THREE.FloatType);
   texture.minFilter = texture.magFilter = THREE.NearestFilter;
   texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.generateMipmaps = false;
   texture.needsUpdate = true;
-  const old = _bowlCache;
-  _bowlCache = { key, table, texture };
-  if (old) setTimeout(() => old.texture.dispose(), 2000);
-  return _bowlCache;
+  return { key, table, texture };
+  });
 }
 const _bowlFor = (i) => { const b = _bowlTableFor(i); return b ? { stampBowl: b.table } : {}; };
 
@@ -6345,8 +6408,7 @@ function _ringMapFor(i, entry) {
   const s = i === activeLayer ? settings : L.settings;
   if (!s.stampOnce || !s.stampRing || s.stampRingPlace !== 'wall') return entry;
   const flip = !!s.stampRingFlip;
-  const hit = _ringMapCache.get(entry.imageData);
-  if (hit && hit.flip === flip) return hit.entry;
+  return _derived(_ringMapCache, entry.imageData, flip ? 'flip' : 'plain', () => {
   const ring = detectRing(entry.imageData.data, entry.width, entry.height);
   const strip = unwrapRing(entry.imageData.data, entry.width, entry.height, ring, { flip });
   const imageData = new ImageData(strip.data, strip.width, strip.height);
@@ -6355,9 +6417,8 @@ function _ringMapFor(i, entry) {
   canvas.getContext('2d').putImageData(imageData, 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  const out = { ...entry, imageData, width: strip.width, height: strip.height, texture, ring };
-  _ringMapCache.set(entry.imageData, { flip, entry: out });
-  return out;
+  return { ...entry, imageData, width: strip.width, height: strip.height, texture, ring };
+  });
 }
 
 function _grownMapFor(i, entry) {
@@ -6373,8 +6434,7 @@ function _grownMapFor(i, entry) {
   const rx = q(r * entry.width / frame.sizeU, entry.width / 4);
   const ry = q(r * entry.height * rows / frame.sizeV, entry.height / 4);
   const key = `${rx}_${ry}_${frame.wrap}_${rows}`;
-  const hit = _grownMapCache.get(entry.imageData);
-  if (hit && hit.key === key) return hit.entry;
+  return _derived(_grownMapCache, entry.imageData, key, () => {
   const data = growLines(entry.imageData.data, entry.width, entry.height, rx, ry,
     { wrapX: frame.wrap, wrapY: frame.wrap && rows > 1 });
   const imageData = new ImageData(data, entry.width, entry.height);
@@ -6383,11 +6443,8 @@ function _grownMapFor(i, entry) {
   canvas.getContext('2d').putImageData(imageData, 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  const grown = { ...entry, imageData, texture };
-  _grownMapCache.set(entry.imageData, { key, entry: grown });
-  // The material switches to the new texture on this update; free the old one after.
-  if (hit) setTimeout(() => hit.entry.texture.dispose(), 2000);
-  return grown;
+  return { ...entry, imageData, texture };
+  });
 }
 
 /** The active layer's map after texture smoothing / inversion (see _effectiveMapFor). */
