@@ -74,6 +74,8 @@ function _clip(material) {
   if (material) material.clippingPlanes = _clipPlanes;
   return material;
 }
+/** For overlays drawn from outside the viewer: cut them with the section view like the model. */
+export function clipMaterial(material) { return _clip(material); }
 
 const _TURNTABLE_RAD_PER_S = (2 * Math.PI) / 24;   // one revolution every 24 s
 const _Z_AXIS = new THREE.Vector3(0, 0, 1);
@@ -222,6 +224,7 @@ export function initViewer(canvas) {
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, stencil: true, powerPreference: 'high-performance' });
   renderer.localClippingEnabled = true;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  _watchPixelRatio();
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.1;
@@ -807,10 +810,18 @@ export function setTurntable(on, onStop = null) {
   _turntable = on ? { last: performance.now(), onStop } : null;
 }
 
+/** Follow the screen's pixel density (window moved to another monitor, browser zoom). */
+function _watchPixelRatio() {
+  const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+  mq.addEventListener('change', () => { onResize(); _watchPixelRatio(); }, { once: true });
+}
+
 function onResize() {
   const el = renderer.domElement.parentElement;
   const w = el.clientWidth;
   const h = el.clientHeight;
+  const dpr = Math.min(window.devicePixelRatio, 2);
+  if (renderer.getPixelRatio() !== dpr) renderer.setPixelRatio(dpr);
   renderer.setSize(w, h, false);
   const aspect = w / h;
   // Update both cameras so switching stays seamless

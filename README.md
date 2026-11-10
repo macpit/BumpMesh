@@ -81,6 +81,11 @@ A new step in the tool rail for motifs that are placed, not tiled. Every ornamen
 - **Preview matches the export** in four more places: "Rotate around Z" is shown in the editor; a hidden active layer no longer covers the layers below or shows its ornament colour; where two ornaments overlap the upper one wins in the 3MF too; the ornament colour and the height bands run right up to sharp edges instead of stopping half a triangle short.
 - **Removing a layer** no longer hands its painted mask to the layer after it.
 - **Paint filaments** — clicking the active filament chip a second time stops painting.
+- **No seam line on borders and wall rings** — the preview no longer draws a thin grey line at the back of a border and between its rows, and a stamp seen small no longer picks up the opposite edge of its image.
+- **Ring from a non-square image** — the ring's radius follows the shorter side of the image, in the preview and the export alike.
+- **Border on the axis** — a ring "over the bowl" switched to a border has its centre on the axis; the pattern now runs around the wall (starting at +X) instead of collapsing into stripes.
+- **Height lines** are cut by the section view like the model and disappear when the texture is removed.
+- **Sharp on every screen** — the view follows the pixel density when the window moves to another monitor or the browser zoom changes.
 
 ### Speed
 - **Ornament sliders** update the preview after a short pause while dragging, like every other slider, instead of recomputing on every tick (line growing, ring unwrap, depth map).

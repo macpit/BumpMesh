@@ -157,6 +157,20 @@ const sharedGLSL = /* glsl */`
     return h;
   }
 
+#ifdef BM_FRAGMENT
+  // A stamp's map with explicit gradients (see computeHeightAtPoint): the
+  // mip level then follows how fast the image really runs across the pixel,
+  // not the jumps of the coordinate at the back seam and between rows.
+  float sampleTexGrad(int l, vec2 uv, vec2 gx, vec2 gy) {
+    float h = 0.0;
+    if      (l == 0) h = textureGrad(map0, uv, gx, gy).r;
+    else if (l == 1) h = textureGrad(map1, uv, gx, gy).r;
+    else if (l == 2) h = textureGrad(map2, uv, gx, gy).r;
+    else             h = textureGrad(map3, uv, gx, gy).r;
+    return h;
+  }
+#endif
+
   // Sample layer l after applying scale + tiling (aspect-corrected) and an
   // in-plane rotation by angle (radians)
   float sampleMapAngle(int l, vec2 rawUV, float angle) {
@@ -253,6 +267,7 @@ const sharedGLSL = /* glsl */`
     } else {
       vec2 rp = pos.xy - layerCylCenter[l];
       vec2 rc = st.xy - layerCylCenter[l];
+      if (dot(rc, rc) < 1e-12) rc = vec2(1.0, 0.0);   // centre on the axis: start the turn at +x
       float dth = atan(rc.x * rp.y - rc.y * rp.x, dot(rc, rp));
       d = vec2(dth * max(layerCylRadius[l], 1e-4), pos.z - st.z);
       float lp = length(rp);
@@ -308,7 +323,7 @@ const sharedGLSL = /* glsl */`
     if ((!wrapU && (f.x < -cl.x || f.x > 1.0 + cl.x)) || f.y < -cl.y || f.y > 1.0 + cl.y) return 0.0;
     float ringEdge = 1e9;
     if (layerStampRing[l].x >= 0.0) {
-      float R = 0.5 * layerStampSize[l].x;
+      float R = 0.5 * min(layerStampSize[l].x, layerStampSize[l].y);
       float d = length((f.xy - 0.5) * layerStampSize[l].xy);
       float rIn = layerStampRing[l].x * R - layerStampClear[l], rOut = layerStampRing[l].y * R + layerStampClear[l];
       if (d > rOut || d < rIn) return 0.0;
@@ -358,12 +373,34 @@ const sharedGLSL = /* glsl */`
       // wraps the opposite border in (same as _stampGrey in displacement.js).
       vec2 halfTexel = 0.5 / layerStampSize[l].zw;
       vec2 suv = stampFrame(l, pos, projN).xy;
+#ifdef BM_FRAGMENT
+      // Gradients of the image coordinate while it is still continuous
+      // (before the rows' fract and before any early return). Around the
+      // wall the angle jumps by one turn at the back: take that jump out, or
+      // the seam would read the smallest mip — a grey line the export has not.
+      vec2 cuv = suv;
+      if (layerStampWrap[l] > 1) cuv.y *= float(layerStampWrap[l]);
+      vec2 gx = dFdx(cuv), gy = dFdy(cuv);
+      if (layerStampWrap[l] >= 1) {
+        float turn = 6.2831853 * max(layerCylRadius[l], 1e-4) / layerStampSize[l].x;
+        gx.x -= turn * floor(gx.x / turn + 0.5);
+        gy.x -= turn * floor(gy.x / turn + 0.5);
+      }
+      // Seen small, the sample spans several texels: keep that far from the
+      // image's border so the opposite border is not blended in.
+      vec2 span = max(abs(gx), abs(gy));
+      halfTexel = min(vec2(0.5), max(halfTexel, span));
+#endif
       // Clearance frame: the image adds nothing outside itself.
       if (suv.y < 0.0 || suv.y > 1.0 || (layerStampWrap[l] == 0 && (suv.x < 0.0 || suv.x > 1.0))) return 0.0;
       if (layerStampWrap[l] > 1) suv.y = fract(suv.y * float(layerStampWrap[l]));   // rows in the band
       suv.y = clamp(suv.y, halfTexel.y, 1.0 - halfTexel.y);
       if (layerStampWrap[l] == 0) suv.x = clamp(suv.x, halfTexel.x, 1.0 - halfTexel.x);   // a border wraps around
+#ifdef BM_FRAGMENT
+      return sampleTexGrad(l, suv, gx, gy);
+#else
       return sampleTex(l, suv);
+#endif
     }
     int mappingMode = layerMode[l];
     float mappingBlend = layerBlend[l];
@@ -602,6 +639,7 @@ const vertexShader = /* glsl */`
 
 const fragmentShader = /* glsl */`
   precision highp float;
+  #define BM_FRAGMENT
   ${sharedGLSL}
 
   uniform sampler2D boundaryEdgeTex;

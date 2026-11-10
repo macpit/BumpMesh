@@ -8,7 +8,7 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { initViewer, loadGeometry, setMeshMaterial, setMeshGeometry, setWireframe,
-         getControls, getCamera, getCurrentMesh, getScene,
+         getControls, getCamera, getCurrentMesh, getScene, clipMaterial,
          setExclusionOverlay, setHoverPreview, setViewerTheme,
          setProjection, requestRender,
          clearDiagOverlays, setDiagEdges, addDiagFaces,
@@ -3912,10 +3912,10 @@ function _syncBowlLines() {
       pts.push(new THREE.Vector3(frame.cx + (r + lift) * Math.cos(a), frame.cy + (r + lift) * Math.sin(a), z));
     }
     const dragged = _bowlDrag && _bowlDrag.k === k;
-    const mat = new LineMaterial({
+    const mat = clipMaterial(new LineMaterial({
       color: dragged && _bowlDrag.off ? 0xff3b30 : BOWL_LINE_COLORS[k % BOWL_LINE_COLORS.length],
       linewidth: dragged ? 4 : 2.5, depthTest: false, transparent: true, opacity: dragged ? 1 : 0.9,
-    });
+        }));
     mat.resolution.set(canvas.clientWidth, canvas.clientHeight);
     const lg = new LineGeometry();
     lg.setPositions(pts.flatMap(p => [p.x, p.y, p.z]));
@@ -6924,6 +6924,7 @@ function updatePreview() {
     bakeBtn.disabled = true;
     updateSmartResBtnState();
     _renderLayerStrip();
+    _syncBowlLines();   // no texture left: its height lines go too
     return;
   }
 

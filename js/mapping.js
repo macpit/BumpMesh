@@ -639,10 +639,11 @@ export function stampUV(pos, normal, frame) {
   let inside = (frame.wrap || (u >= -cu && u <= 1 + cu)) && v >= -cv && v <= 1 + cv;
   let ringEdge = Infinity;   // mm to the nearest edge of a ring's covered annulus
   if (frame.ringIn >= 0) {
-    const R = 0.5 * frame.sizeU, c = frame.clear || 0;
+    // The radii are shares of the image's shorter half side (detectRing).
+    const R = 0.5 * Math.min(frame.sizeU, frame.sizeV), c = frame.clear || 0;
     const d = Math.hypot((u - 0.5) * frame.sizeU, (v - 0.5) * frame.sizeV);
     const rIn = frame.ringIn * R - c, rOut = frame.ringOut * R + c;
-    inside = d <= rOut && d >= rIn;
+    inside = inside && d <= rOut && d >= rIn;
     ringEdge = Math.min(rOut - d, rIn > 0 ? d - rIn : Infinity);
   }
   let cover = 0;
@@ -704,7 +705,10 @@ function _stampAB(x, y, z, frame, out) {
     if (side < 0) a = -a;
   } else {
     const rpx = x - frame.ccx, rpy = y - frame.ccy;
-    const rcx = frame.cx - frame.ccx, rcy = frame.cy - frame.ccy;
+    // A centre on the axis itself (a ring over the bowl turned into a
+    // border) has no direction: start the turn at +x.
+    let rcx = frame.cx - frame.ccx, rcy = frame.cy - frame.ccy;
+    if (rcx * rcx + rcy * rcy < 1e-12) { rcx = 1; rcy = 0; }
     out.dth = Math.atan2(rcx * rpy - rcy * rpx, rcx * rpx + rcy * rpy);
     a = out.dth * frame.r; b = z - frame.cz;
     if (side < 0) a = -a;
