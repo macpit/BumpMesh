@@ -38,7 +38,12 @@ function simTri(a, b, c, T, memo, depth) {
   const ka = Math.round((a / T) * 256);
   const kb = Math.round((b / T) * 256);
   const kc = Math.round((c / T) * 256);
-  const key = ka * 0x40000000 + kb * 0x10000 + kc;
+  // 17 bits per edge fit a number exactly (51 bits); an edge of 512 × T or
+  // more — a coarse CAD face with a fine target — gets a text key instead of
+  // spilling into its neighbour's bits.
+  const key = ka < 0x20000
+    ? (ka * 0x20000 + kb) * 0x20000 + kc
+    : ka + '_' + kb + '_' + kc;
   const cached = memo.get(key);
   if (cached !== undefined) return cached;
 

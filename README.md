@@ -85,6 +85,11 @@ A new step in the tool rail for motifs that are placed, not tiled. Every ornamen
 - **Ring from a non-square image** — the ring's radius follows the shorter side of the image, in the preview and the export alike.
 - **Border on the axis** — a ring "over the bowl" switched to a border has its centre on the axis; the pattern now runs around the wall (starting at +X) instead of collapsing into stripes.
 - **Height lines** are cut by the section view like the model and disappear when the texture is removed.
+- **Open meshes keep their rim** — simplifying a model with open edges (or the untextured half of one) no longer eats it away from the rim; closed models are unaffected.
+- **Very dense colour exports** — the height / ornament colour cut writes into typed arrays, so it no longer fails near 15 million triangles and needs far less memory.
+- **Triangle estimate on coarse CAD meshes** — edges more than 64× the target length no longer give a wrong, order-dependent count (Smart resolution, estimated triangles).
+- **Advanced mesh check** — a few very large triangles next to many tiny ones no longer exhaust the memory.
+- **Mirrored 3MF parts** load the right way out.
 - **Sharp on every screen** — the view follows the pixel density when the window moves to another monitor or the browser zoom changes.
 
 ### Speed

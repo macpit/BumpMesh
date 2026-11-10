@@ -650,7 +650,35 @@ function addCreaseQuadrics(quadrics, positions, faces, faceCount) {
   const sqrtW = Math.sqrt(CREASE_WEIGHT);
 
   for (let ei = 0; ei < edgeCount; ei++) {
-    if (edgeNum[ei] !== 2) continue; // boundary (1 face) or non-manifold (>2) — skip
+    if (edgeNum[ei] === 1) {
+      // Open boundary (Garland & Heckbert §6, boundary constraint): one
+      // penalty plane through the edge, perpendicular to its only face. A
+      // rim vertex may then slide along a straight rim but not inwards —
+      // without it an open mesh is eaten from its rim (sliding along the
+      // surface costs nothing). Closed meshes have no such edge.
+      const f = edgeF0[ei];
+      const a = faces[f*3], b = faces[f*3+1], c = faces[f*3+2];
+      const ux = positions[b*3] - positions[a*3], uy = positions[b*3+1] - positions[a*3+1], uz = positions[b*3+2] - positions[a*3+2];
+      const vx = positions[c*3] - positions[a*3], vy = positions[c*3+1] - positions[a*3+1], vz = positions[c*3+2] - positions[a*3+2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (nl < 1e-20) continue;
+      nx /= nl; ny /= nl; nz /= nl;
+      const va = edgeVa[ei], vb = edgeVb[ei];
+      let ex = positions[vb*3] - positions[va*3], ey = positions[vb*3+1] - positions[va*3+1], ez = positions[vb*3+2] - positions[va*3+2];
+      const el = Math.sqrt(ex*ex + ey*ey + ez*ez);
+      if (el < 1e-20) continue;
+      ex /= el; ey /= el; ez /= el;
+      let px = ny*ez - nz*ey, py = nz*ex - nx*ez, pz = nx*ey - ny*ex;
+      const pl = Math.sqrt(px*px + py*py + pz*pz);
+      if (pl < 1e-10) continue;
+      px /= pl; py /= pl; pz /= pl;
+      const d = -(px*positions[va*3] + py*positions[va*3+1] + pz*positions[va*3+2]);
+      addPlaneQ(quadrics, va, px*sqrtW, py*sqrtW, pz*sqrtW, d*sqrtW);
+      addPlaneQ(quadrics, vb, px*sqrtW, py*sqrtW, pz*sqrtW, d*sqrtW);
+      continue;
+    }
+    if (edgeNum[ei] !== 2) continue; // non-manifold (>2) — skip
     const f0 = edgeF0[ei];
     const f1 = edgeF1[ei];
     const v0a = faces[f0*3], v0b = faces[f0*3+1], v0c = faces[f0*3+2];

@@ -105,8 +105,22 @@ async function findIntersectingTriangles(geometry, token, shellIds) {
     extents[t] = Math.max(maxX[t] - minX[t], maxY[t] - minY[t], maxZ[t] - minZ[t]);
   }
   extents.sort();
-  const cellSize = Math.max(extents[triCount >> 1] * 2, 1e-6);
+  // Cell: twice the median triangle, but never finer than 1/256 of the model
+  // — a CAD mesh with thousands of tiny triangles and a few large ones would
+  // otherwise spread each large one over millions of cells.
+  let gMinX = Infinity, gMinY = Infinity, gMinZ = Infinity, gMaxX = -Infinity, gMaxY = -Infinity, gMaxZ = -Infinity;
+  for (let t = 0; t < triCount; t++) {
+    if (minX[t] < gMinX) gMinX = minX[t]; if (maxX[t] > gMaxX) gMaxX = maxX[t];
+    if (minY[t] < gMinY) gMinY = minY[t]; if (maxY[t] > gMaxY) gMaxY = maxY[t];
+    if (minZ[t] < gMinZ) gMinZ = minZ[t]; if (maxZ[t] > gMaxZ) gMaxZ = maxZ[t];
+  }
+  const modelDim = Math.max(gMaxX - gMinX, gMaxY - gMinY, gMaxZ - gMinZ, 0);
+  const cellSize = Math.max(extents[triCount >> 1] * 2, modelDim / 256, 1e-6);
   const invCell = 1 / cellSize;
+  // Triangles spanning more cells than this stay out of the grid and are
+  // tested against it afterwards.
+  const BIG_CELLS = 512;
+  const big = [];
 
   // Insert triangles into spatial grid (each triangle may span multiple cells)
   const grid = new Map();
@@ -119,6 +133,7 @@ async function findIntersectingTriangles(geometry, token, shellIds) {
     const ix1 = Math.floor(maxX[t] * invCell);
     const iy1 = Math.floor(maxY[t] * invCell);
     const iz1 = Math.floor(maxZ[t] * invCell);
+    if ((ix1 - ix0 + 1) * (iy1 - iy0 + 1) * (iz1 - iz0 + 1) > BIG_CELLS) { big.push(t); continue; }
     for (let ix = ix0; ix <= ix1; ix++) {
       for (let iy = iy0; iy <= iy1; iy++) {
         for (let iz = iz0; iz <= iz1; iz++) {
@@ -141,6 +156,20 @@ async function findIntersectingTriangles(geometry, token, shellIds) {
   let pairsTested = 0;
   const intersectFaces = new Set();
   const bodyIntersectFaces = new Set();
+  // a < b, boxes overlap: count the pair if the triangles really cut each other.
+  const testPair = (a, b) => {
+    if (sharesVertex(a, b)) return;   // topological neighbours touch at that vertex
+    if (!trianglesIntersectSAT(pos, a, b)) return;
+    if (shellIds && shellIds[a] !== shellIds[b]) {
+      bodyIntersectCount++;
+      bodyIntersectFaces.add(a);
+      bodyIntersectFaces.add(b);
+    } else {
+      intersectCount++;
+      intersectFaces.add(a);
+      intersectFaces.add(b);
+    }
+  };
 
   for (const [, { ix, iy, iz, tris }] of grid) {
     for (let i = 0; i < tris.length; i++) {
@@ -157,27 +186,61 @@ async function findIntersectingTriangles(geometry, token, shellIds) {
             Math.floor(Math.max(minY[a], minY[b]) * invCell) !== iy ||
             Math.floor(Math.max(minZ[a], minZ[b]) * invCell) !== iz) continue;
 
-        // Skip triangles sharing any vertex (topological neighbors)
-        if (sharesVertex(a, b)) continue;
-
-        // SAT triangle-triangle intersection
-        if (trianglesIntersectSAT(pos, a, b)) {
-          if (shellIds && shellIds[a] !== shellIds[b]) {
-            bodyIntersectCount++;
-            bodyIntersectFaces.add(a);
-            bodyIntersectFaces.add(b);
-          } else {
-            intersectCount++;
-            intersectFaces.add(a);
-            intersectFaces.add(b);
-          }
-        }
+        testPair(a, b);
 
         if (++pairsTested % 10000 === 0) {
           await yieldFrame();
           if (token.get() !== startToken) return -1; // aborted
         }
       }
+    }
+  }
+
+  // Large triangles: against each other, then against the grid's triangles
+  // — through the cells of their box, or through all occupied cells when
+  // that is fewer. `seen` keeps a triangle that sits in several cells to one
+  // test per large triangle.
+  if (big.length) {
+    const seen = new Int32Array(triCount).fill(-1);
+    const cells = [...grid.values()];
+    for (let i = 0; i < big.length; i++) {
+      const B = big[i];
+      for (let j = i + 1; j < big.length; j++) {
+        const C = big[j];
+        if (minX[B] > maxX[C] || minX[C] > maxX[B] || minY[B] > maxY[C] || minY[C] > maxY[B] ||
+            minZ[B] > maxZ[C] || minZ[C] > maxZ[B]) continue;
+        testPair(Math.min(B, C), Math.max(B, C));
+        if (++pairsTested % 10000 === 0) {
+          await yieldFrame();
+          if (token.get() !== startToken) return -1;
+        }
+      }
+      const ix0 = Math.floor(minX[B] * invCell), ix1 = Math.floor(maxX[B] * invCell);
+      const iy0 = Math.floor(minY[B] * invCell), iy1 = Math.floor(maxY[B] * invCell);
+      const iz0 = Math.floor(minZ[B] * invCell), iz1 = Math.floor(maxZ[B] * invCell);
+      const visit = async (cell) => {
+        for (const t of cell.tris) {
+          if (seen[t] === i) continue;
+          seen[t] = i;
+          if (minX[B] > maxX[t] || minX[t] > maxX[B] || minY[B] > maxY[t] || minY[t] > maxY[B] ||
+              minZ[B] > maxZ[t] || minZ[t] > maxZ[B]) continue;
+          testPair(Math.min(B, t), Math.max(B, t));
+          if (++pairsTested % 10000 === 0) await yieldFrame();
+        }
+      };
+      const span = (ix1 - ix0 + 1) * (iy1 - iy0 + 1) * (iz1 - iz0 + 1);
+      if (span > cells.length) {
+        for (const cell of cells) {
+          if (cell.ix < ix0 || cell.ix > ix1 || cell.iy < iy0 || cell.iy > iy1 || cell.iz < iz0 || cell.iz > iz1) continue;
+          await visit(cell);
+        }
+      } else {
+        for (let ix = ix0; ix <= ix1; ix++) for (let iy = iy0; iy <= iy1; iy++) for (let iz = iz0; iz <= iz1; iz++) {
+          const cell = grid.get(cellKey(ix, iy, iz));
+          if (cell) await visit(cell);
+        }
+      }
+      if (token.get() !== startToken) return -1;
     }
   }
 

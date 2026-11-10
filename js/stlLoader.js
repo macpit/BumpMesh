@@ -470,9 +470,12 @@ function parse3MF(data) {
     const mesh = objectMap.get(inst.meshKey);
     if (!mesh) continue;
     const { vertices, triangles } = mesh;
+    // A mirrored instance (negative determinant) turns every triangle inside
+    // out: swap two corners so the outside stays outside.
+    const mirrored = inst.matrix.determinant() < 0;
     for (let t = 0; t < triangles.length; t += 3) {
       for (let v = 0; v < 3; v++) {
-        const vi = triangles[t + v];
+        const vi = triangles[t + (mirrored && v > 0 ? 3 - v : v)];
         tmpV.set(vertices[vi * 3], vertices[vi * 3 + 1], vertices[vi * 3 + 2]);
         tmpV.applyMatrix4(inst.matrix);
         positions[writeOffset++] = tmpV.x;

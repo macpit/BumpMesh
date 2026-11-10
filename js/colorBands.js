@@ -197,10 +197,21 @@ export function cutHeightBands(positions, heights, textured, T, opts = {}) {
   }
 
   // ── Re-triangulate ──────────────────────────────────────────────────────
-  const outPos = [];
-  const outLab = [];
-  const outPar = [];
-  const outCarry = [];
+  // Typed output that doubles when full: a plain array of 9 numbers per
+  // triangle hits the engine's array limit near 15 million triangles and
+  // costs several times the memory before that.
+  let cap = Math.max(1024, Math.ceil(triCount * 1.5)), nOut = 0;
+  let outPos = new Float32Array(cap * 9);
+  let outLab = new Uint8Array(cap);
+  let outPar = new Int32Array(cap);
+  let outCarry = vc ? new Float32Array(cap * 3) : null;
+  const growOut = () => {
+    cap *= 2;
+    const p = new Float32Array(cap * 9); p.set(outPos); outPos = p;
+    const l = new Uint8Array(cap); l.set(outLab); outLab = l;
+    const q = new Int32Array(cap); q.set(outPar); outPar = q;
+    if (outCarry) { const c = new Float32Array(cap * 3); c.set(outCarry); outCarry = c; }
+  };
   const ring = [];
   const pushTri = (a, b, c, label, parent) => {
     // Skip exact zero-area triangles (collinear contour points on one edge);
@@ -209,10 +220,15 @@ export function cutHeightBands(positions, heights, textured, T, opts = {}) {
     const wx = vx[c] - vx[a], wy = vy[c] - vy[a], wz = vz[c] - vz[a];
     const cx = uy * wz - uz * wy, cy = uz * wx - ux * wz, cz = ux * wy - uy * wx;
     if (cx * cx + cy * cy + cz * cz < 1e-24) return;
-    outPos.push(vx[a], vy[a], vz[a], vx[b], vy[b], vz[b], vx[c], vy[c], vz[c]);
-    if (vc) outCarry.push(vc[a], vc[b], vc[c]);
-    outLab.push(label);
-    outPar.push(parent);
+    if (nOut === cap) growOut();
+    const o = nOut * 9;
+    outPos[o] = vx[a]; outPos[o + 1] = vy[a]; outPos[o + 2] = vz[a];
+    outPos[o + 3] = vx[b]; outPos[o + 4] = vy[b]; outPos[o + 5] = vz[b];
+    outPos[o + 6] = vx[c]; outPos[o + 7] = vy[c]; outPos[o + 8] = vz[c];
+    if (outCarry) { outCarry[nOut * 3] = vc[a]; outCarry[nOut * 3 + 1] = vc[b]; outCarry[nOut * 3 + 2] = vc[c]; }
+    outLab[nOut] = label;
+    outPar[nOut] = parent;
+    nOut++;
   };
 
   for (let t = 0; t < triCount; t++) {
@@ -256,8 +272,10 @@ export function cutHeightBands(positions, heights, textured, T, opts = {}) {
     // Height is linear over the triangle, so each band's part is the convex
     // polygon of ring points whose height lies in [T[k-1], T[k]] (contour
     // points belong to both neighbouring bands). Fan-triangulate it.
-    const kMin = bandOf(Math.min(vh[ring[0]], ...ring.map(i => vh[i])), T);
-    const kMax = bandOf(Math.max(...ring.map(i => vh[i])), T);
+    let hMin = Infinity, hMax = -Infinity;
+    for (let i = 0; i < ring.length; i++) { const h = vh[ring[i]]; if (h < hMin) hMin = h; if (h > hMax) hMax = h; }
+    const kMin = bandOf(hMin, T);
+    const kMax = bandOf(hMax, T);
     for (let k = kMin; k <= kMax; k++) {
       const lo = k === 0 ? -Infinity : T[k - 1];
       const hi = k === T.length ? Infinity : T[k];
@@ -272,10 +290,10 @@ export function cutHeightBands(positions, heights, textured, T, opts = {}) {
   }
 
   return {
-    positions: Float32Array.from(outPos),
-    labels: Uint8Array.from(outLab),
-    parent: Int32Array.from(outPar),
-    carried: vc ? Float32Array.from(outCarry) : null,
+    positions: outPos.slice(0, nOut * 9),
+    labels: outLab.slice(0, nOut),
+    parent: outPar.slice(0, nOut),
+    carried: outCarry ? outCarry.slice(0, nOut * 3) : null,
     cutEdges,
   };
 }
