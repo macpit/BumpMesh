@@ -217,6 +217,28 @@ function buildDimensions(box, groundZ, scale) {
   return group;
 }
 
+// Ground grid: `size` mm across, in the current theme's colours. Cells are
+// 5 mm up to 400 mm, 10 mm up to 1 m, 50 mm beyond, so a large model does
+// not get thousands of lines.
+let _gridSize = 200, _gridLight = false;
+function _makeGrid(size, z) {
+  if (grid) {
+    scene.remove(grid);
+    grid.geometry.dispose();
+    grid.material.dispose();
+  }
+  _gridSize = size;
+  const cell = size <= 400 ? 5 : size <= 1000 ? 10 : 50;
+  grid = new THREE.GridHelper(
+    size, Math.round(size / cell),
+    _gridLight ? 0xb0b0c8 : 0x333340,
+    _gridLight ? 0xd0d0e0 : 0x2a2a34
+  );
+  grid.rotation.x = Math.PI / 2;  // rotate to XY plane for Z-up
+  grid.position.z = z;
+  scene.add(grid);
+}
+
 export function initViewer(canvas) {
   // Renderer
   // 'high-performance' asks hybrid-GPU laptops for the discrete GPU (#75).
@@ -235,10 +257,7 @@ export function initViewer(canvas) {
   scene.background = new THREE.Color(0x111114);
 
   // Grid helper — in XY plane (Z-up)
-  grid = new THREE.GridHelper(200, 40, 0x333340, 0x2a2a34);
-  grid.rotation.x = Math.PI / 2;  // rotate to XY plane for Z-up
-  grid.position.z = 0;
-  scene.add(grid);
+  _makeGrid(200, 0);
 
   // Camera — orthographic (parallel projection), Z-up (default)
   orthoCamera = new THREE.OrthographicCamera(-150, 150, 150, -150, -10000, 10000);
@@ -893,6 +912,11 @@ export function loadGeometry(geometry, material, { keepCamera = false } = {}) {
   geometry.computeBoundingBox();
   const box = geometry.boundingBox;
   const groundZ = box.min.z - 0.01;
+  // The ground grid reaches past the model: at least the 200 mm it always
+  // had, else 1.6 × the model's footprint (rounded up to 100 mm).
+  const foot = Math.max(box.max.x - box.min.x, box.max.y - box.min.y, 0);
+  const want = Math.max(200, Math.ceil(foot * 1.6 / 100) * 100);
+  if (want !== _gridSize) _makeGrid(want, groundZ);
   grid.position.z = groundZ;
 
   // Fit camera
@@ -1201,20 +1225,8 @@ export function setSceneBackground(hexColor) {
 export function setViewerTheme(isLight) {
   if (!scene) return;
   scene.background = new THREE.Color(isLight ? 0xf0f0f5 : 0x111114);
-  const savedZ = grid ? grid.position.z : 0;
-  if (grid) {
-    scene.remove(grid);
-    grid.geometry.dispose();
-    grid.material.dispose();
-  }
-  grid = new THREE.GridHelper(
-    200, 40,
-    isLight ? 0xb0b0c8 : 0x333340,
-    isLight ? 0xd0d0e0 : 0x2a2a34
-  );
-  grid.rotation.x = Math.PI / 2;
-  grid.position.z = savedZ;
-  scene.add(grid);
+  _gridLight = !!isLight;
+  _makeGrid(_gridSize, grid ? grid.position.z : 0);
   requestRender();
 }
 

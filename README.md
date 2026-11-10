@@ -94,6 +94,7 @@ A new step in the tool rail for motifs that are placed, not tiled. Every ornamen
 - **Height lines** — a click on a line without dragging leaves the lines as they were (automatic ones keep following the distribution slider); a double-click on an existing line no longer adds a second one on top.
 - **New model** — the ornaments of every layer start over on a newly loaded model, not only the active one.
 - **Start** — the page takes clicks and drops once it has finished starting, so an early click on a slow connection no longer fails.
+- **Ground grid follows the model** — the grid was fixed at 200 mm; it now reaches past the model (1.6 × its footprint) after scaling or loading a large one, with coarser cells on big grids.
 - **Sharp on every screen** — the view follows the pixel density when the window moves to another monitor or the browser zoom changes.
 
 ### Speed
