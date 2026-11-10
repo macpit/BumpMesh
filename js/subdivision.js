@@ -46,6 +46,8 @@ const QUANTISE   = 1e5;
 const SAFETY_CAP = (typeof navigator !== 'undefined' && navigator.deviceMemory >= 8)
   ? 32_000_000
   : 16_000_000;
+/** The cap on this device, for callers that plan a resolution (printProfile.js). */
+export const SUBDIVISION_SAFETY_CAP = SAFETY_CAP;
 
 // ── Growable typed vertex store ──────────────────────────────────────────────
 // Shared by the indexers (which build it) and the subdivision passes (which

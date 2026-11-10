@@ -865,6 +865,33 @@
       <!-- Export -->
       <section class="panel-section" data-step="export">
         <h2 data-i18n="sections.export" data-i18n-title="tooltips.export" title="Smaller edge length = finer displacement detail. Output is then decimated to the triangle limit.">Export ⓘ</h2>
+        <!-- Print: nozzle, layer height and quality set the resolution and the triangle limit (printProfile.js) -->
+        <div id="print-box" class="print-box">
+          <div class="form-row">
+            <span class="form-row-label" data-i18n="print.nozzle" data-i18n-title="print.nozzleTitle" title="The nozzle in your printer. Its line width (nozzle + 0.02 mm) is the smallest structure it prints across a layer.">Nozzle (mm)</span>
+            <div class="excl-seg" role="group">
+              <button type="button" class="excl-seg-btn" data-print-nozzle="0.2">0.2</button>
+              <button type="button" class="excl-seg-btn" data-print-nozzle="0.4">0.4</button>
+              <button type="button" class="excl-seg-btn" data-print-nozzle="0.6">0.6</button>
+              <button type="button" class="excl-seg-btn" data-print-nozzle="0.8">0.8</button>
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="print-layer" data-i18n="print.layer" data-i18n-title="print.layerTitle" title="The layer height you slice with. Finer layers print finer detail on walls, so the mesh gets finer with them.">Layer height (mm)</label>
+            <select id="print-layer"></select>
+          </div>
+          <div class="form-row">
+            <span class="form-row-label" data-i18n="print.quality" data-i18n-title="print.qualityTitle" title="How fine the exported mesh is compared with what the nozzle can print.">Quality</span>
+            <div class="excl-seg" role="group">
+              <button type="button" class="excl-seg-btn" data-print-quality="low" data-i18n="print.low" data-i18n-title="print.lowTitle" title="Coarse edges, small and quick files. For test prints.">Low</button>
+              <button type="button" class="excl-seg-btn" data-print-quality="mid" data-i18n="print.mid" data-i18n-title="print.midTitle" title="Edges as fine as the nozzle and the layers can print.">Medium</button>
+              <button type="button" class="excl-seg-btn" data-print-quality="max" data-i18n="print.max" data-i18n-title="print.maxTitle" title="Finer than the printer resolves, for the smoothest curves, and nothing simplified away, up to what this device's memory allows. Large files; takes minutes on big models.">Max</button>
+            </div>
+          </div>
+          <div id="print-relief-hint" class="resolution-warning hidden"></div>
+        </div>
+        <details id="export-manual" class="export-manual">
+          <summary data-i18n="print.manual" data-i18n-title="print.manualTitle" title="Resolution and output triangles by hand. Changing one puts the print settings aside until you pick a nozzle, layer height or quality again.">Manual</summary>
         <button id="smart-res-btn" class="smart-res-btn" disabled
                 data-i18n="labels.smartRes"
                 data-i18n-title="tooltips.smartRes"
@@ -886,14 +913,13 @@
         </div>
         <div class="form-row slider-row">
           <label for="max-triangles" data-i18n="labels.outputTriangles" data-i18n-title="tooltips.outputTriangles" title="Mesh is fully subdivided first, then decimated down to this count">Output Triangles</label>
-          <input type="range" id="max-triangles" min="10000" max="20000000" step="10000" value="750000" />
+          <input type="range" id="max-triangles" min="10000" max="32000000" step="10000" value="750000" />
           <span class="val" id="max-triangles-val">0.75 M</span>
         </div>
         <div id="tri-limit-warning" class="tri-limit-warning hidden" data-i18n="warnings.safetyCapHit">
           ⚠ 16M-triangle safety cap hit during subdivision — result may still be coarser than requested edge length.
         </div>
-        <!-- Filled by _renderFilamentColors when filament colors are on -->
-        <div id="color-result-slot" class="color-result-slot"></div>
+        </details>
 
 
         <h3 class="panel-subsection-heading has-tip" data-i18n-title="ui.harvestFlatDesc" title="When decimation reaches the triangle limit there are often still flat faces left that cost almost nothing to remove. With this on, decimation keeps collapsing them past the limit — as long as each collapse moves the surface less than the tolerance below — saving extra triangles without losing visible detail." data-i18n="ui.harvestFlatHeading">Harvest Flat Faces</h3>
@@ -962,6 +988,19 @@
 
       <!-- Export buttons, at the bottom of the Export step -->
       <div class="panel-footer" data-step="export">
+        <!-- What the export will produce (Export ▸ Print, or the manual values) -->
+        <div id="print-summary" class="print-summary hidden">
+          <div id="print-manual-state" class="print-manual-state hidden">
+            <span data-i18n="print.manualState">Manual values in use</span>
+            <button type="button" id="print-auto-btn" class="scale-reset-btn" data-i18n="print.useProfile" data-i18n-title="print.useProfileTitle" title="Back to the values from nozzle, layer height and quality.">Use print settings</button>
+          </div>
+          <div class="ps-item"><span class="ps-label" data-i18n="print.sumEdge">Resolution</span><span class="ps-value" id="ps-edge"></span><span class="ps-note hidden" id="ps-edge-note"></span></div>
+          <div class="ps-item"><span class="ps-label" data-i18n="print.sumTris">Triangles (up to)</span><span class="ps-value" id="ps-tris"></span></div>
+          <div class="ps-item"><span class="ps-label" data-i18n="print.sum3mf">3MF file (about)</span><span class="ps-value" id="ps-3mf"></span></div>
+          <div class="ps-item"><span class="ps-label" data-i18n="print.sumStl">STL file (about)</span><span class="ps-value" id="ps-stl"></span></div>
+        </div>
+        <!-- "Show export result": filled by _renderFilamentColors when filament colors are on -->
+        <div id="color-result-slot" class="color-result-slot"></div>
         <div id="export-progress" class="export-progress hidden">
           <div class="export-progress-track">
             <div id="export-progress-bar" class="export-progress-bar"></div>

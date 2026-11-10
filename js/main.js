@@ -15,10 +15,12 @@ import { initViewer, loadGeometry, setMeshMaterial, setMeshGeometry, setWirefram
          setRotationGizmo, setScaleGizmo, updateScaleGizmo, isGizmoDragging, isSoftwareRendering, setTurntable,
          setSectionView, setSectionAxis, flipSection, setSectionHandlesLocked,
          sectionVisibleHits, setResultPreview } from './viewer.js';
-import { loadModelFile, computeBounds, getTriangleCount }  from './stlLoader.js';
+import { loadModelFile, computeBounds, getTriangleCount, computeSurfaceArea }  from './stlLoader.js';
 import { estimateStep } from './stepLoader.js';
 import { resolveStepSettings } from './stepConvert.js';
 import { computeSmartResolution } from './smartResolution.js';
+import { printTargets, layerOptions, defaultLayer, reliefLayers, NOZZLES, QUALITIES } from './printProfile.js';
+import { computeTriEdges } from './subdivisionEstimate.js';
 import { REF_TEXTURE_SIZE } from './textureAnalysis.js';
 import { loadFullPreset, loadCustomTexture, IMAGE_PRESETS }  from './presetTextures.js';
 import { initTextureGallery } from './textureGallery.js';
@@ -26,7 +28,7 @@ import { getCustomTextureFile } from './customTextures.js';
 import { initSidebarToggle } from './sidebarToggle.js';
 import { initSpaceMousePanel } from './spaceMousePanel.js';
 import { createPreviewMaterial, updateMaterial, MAX_LAYERS } from './previewMaterial.js';
-import { subdivide }          from './subdivision.js';
+import { subdivide, SUBDIVISION_SAFETY_CAP } from './subdivision.js';
 import { runExportPipeline }  from './exportPipeline.js';
 import { runPreviewPipeline, computeFaceNormals } from './previewPipeline.js';
 import { exportSTL, export3MF } from './exporter.js';
@@ -81,6 +83,8 @@ let _bowlLineGroup = null;
 let _bowlLinesShown = true;
 let _bowlDrag = null;        // { k, off } while a line is dragged
 let _bowlDragRaf = 0, _bowlDragEvent = null;   // the drag follows once per frame
+let _printStats = null;      // Export ▸ Print: { geometry, version, count, triEdges, surfaceArea } of the base mesh
+let _printApplying = false;  // true while the print profile writes the two export sliders
 let _keepCameraNext   = false;  // scale/undo: the next material reload keeps the view
 let modelScale        = { x: 1, y: 1, z: 1 };   // Model ▸ Scale, relative to the size the model was loaded with
 // Every move of the loaded geometry (rotate, place on face, scale, re-centre)
@@ -175,6 +179,11 @@ const settings = {
   rotateAroundZ: false,
   refineLength:  1.0,
   maxTriangles:  750_000,
+  // Export ▸ Print (printProfile.js): the two values above follow these while printAuto is on.
+  printNozzle: 0.4,
+  printLayer: 0.2,
+  printQuality: 'mid',
+  printAuto: true,
   lockScale:     true,
   bottomAngleLimit: 5,
   topAngleLimit:    0,
@@ -508,6 +517,7 @@ function _applyModelScale(f) {
   // in metres scaled to mm) re-frames it.
   const grow = Math.max(f.x, f.y, f.z);
   _rotateFinalize({ keepCamera: grow > 0.5 && grow < 2 });
+  _applyPrintProfile();
 }
 
 function _onScaleInput(inp) {
@@ -1903,6 +1913,29 @@ function wireEvents() {
   refineLenVal.addEventListener('change', markRefineLengthUserSet);
   refineLenVal.addEventListener('wheel', markRefineLengthUserSet);
   linkSlider(maxTriSlider, maxTriVal, v => { settings.maxTriangles = v; return formatM(v); }, false);
+  // Export ▸ Print: a value set by hand switches the automatic off.
+  const printManual = (e) => { if (e.isTrusted) _setPrintAuto(false); else if (!_printApplying) _renderPrintInfo(null); };
+  refineLenSlider.addEventListener('input', printManual);
+  refineLenSlider.addEventListener('dblclick', printManual);
+  refineLenVal.addEventListener('change', printManual);
+  refineLenVal.addEventListener('wheel', printManual);
+  maxTriSlider.addEventListener('input', printManual);
+  // Picking a nozzle, layer height or quality puts the print settings (back) in charge.
+  const printPick = (set) => { set(); settings.printAuto = true; _applyPrintProfile(); _autoSaveSettings(); };
+  for (const b of document.querySelectorAll('[data-print-nozzle]')) {
+    b.addEventListener('click', () => printPick(() => {
+      const n = parseFloat(b.dataset.printNozzle);
+      if (settings.printNozzle !== n) settings.printLayer = defaultLayer(n);   // each nozzle has its own range of layers
+      settings.printNozzle = n;
+    }));
+  }
+  for (const b of document.querySelectorAll('[data-print-quality]')) {
+    b.addEventListener('click', () => printPick(() => { settings.printQuality = b.dataset.printQuality; }));
+  }
+  document.getElementById('print-layer').addEventListener('change', (e) => printPick(() => {
+    settings.printLayer = parseFloat(e.target.value) || defaultLayer(settings.printNozzle);
+  }));
+  document.getElementById('print-auto-btn').addEventListener('click', () => _setPrintAuto(true));
   linkSlider(bottomAngleLimitSlider, bottomAngleLimitVal, v => {
     settings.bottomAngleLimit = v; _falloffDirty = true;
     syncSmoothBottomToLimit();
@@ -2078,7 +2111,7 @@ function wireEvents() {
       if (step === 'mask' && exclusionTool && !_filamentPaint) setExclusionTool(null);
       if (step === 'colors' && _filamentPaint) _setFilamentPaint(0, null);
     },
-    onShow: (step) => { _activeStep = step; _syncScaleGizmo(); updateCylinderUIVisibility(); _syncBowlLines(); },
+    onShow: (step) => { _activeStep = step; _syncScaleGizmo(); updateCylinderUIVisibility(); _syncBowlLines(); if (step === 'export') _applyPrintProfile(); },
   });
 
   // ── Menu bar: File ▸ Load model / Recent ──
@@ -5842,6 +5875,101 @@ function _applyDefaultRefineLength(bounds, divisor) {
     refineLenVal.value = defaultEdge;
   }
   checkResolutionWarning();
+  _applyPrintProfile();
+}
+
+// ── Export ▸ Print ───────────────────────────────────────────────────────────
+// Nozzle, layer height and quality give the export's resolution and triangle
+// limit (printProfile.js). While printAuto is on they are recomputed for the
+// model's current size whenever the Export step opens or one of them changes.
+
+function _printModelStats() {
+  const pa = currentGeometry.attributes.position;
+  const st = _printStats;
+  if (st && st.geometry === currentGeometry && st.version === pa.version && st.count === pa.count) return st;
+  _printStats = {
+    geometry: currentGeometry, version: pa.version, count: pa.count,
+    triEdges: computeTriEdges(currentGeometry),
+    surfaceArea: computeSurfaceArea(currentGeometry),
+  };
+  return _printStats;
+}
+
+function _fmtBytes(n) {
+  const mb = n / 1e6;
+  return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : mb >= 10 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
+}
+
+function _syncPrintUI() {
+  if (!NOZZLES.includes(settings.printNozzle)) settings.printNozzle = 0.4;
+  if (!QUALITIES.includes(settings.printQuality)) settings.printQuality = 'mid';
+  const layers = layerOptions(settings.printNozzle);
+  if (!layers.includes(settings.printLayer)) settings.printLayer = defaultLayer(settings.printNozzle);
+  for (const b of document.querySelectorAll('[data-print-nozzle]')) b.classList.toggle('active', parseFloat(b.dataset.printNozzle) === settings.printNozzle);
+  for (const b of document.querySelectorAll('[data-print-quality]')) b.classList.toggle('active', !!settings.printAuto && b.dataset.printQuality === settings.printQuality);
+  const sel = document.getElementById('print-layer');
+  if (sel.dataset.nozzle !== String(settings.printNozzle)) {
+    sel.replaceChildren(...layers.map(l => new Option(l.toFixed(2), String(l))));
+    sel.dataset.nozzle = String(settings.printNozzle);
+  }
+  sel.value = String(settings.printLayer);
+}
+
+/** The summary above the export buttons: what will be exported, and how large the files get. */
+function _renderPrintInfo(tgt) {
+  const box = document.getElementById('print-summary');
+  if (!box) return;
+  const tris = settings.maxTriangles;
+  document.getElementById('ps-edge').textContent = `${settings.refineLength.toFixed(2)} mm`;
+  document.getElementById('ps-tris').textContent = formatM(tris);
+  document.getElementById('ps-3mf').textContent = _fmtBytes(tris * 11.5);
+  document.getElementById('ps-stl').textContent = _fmtBytes(84 + 50 * tris);
+  const note = document.getElementById('ps-edge-note');
+  const capped = !!settings.printAuto && !!tgt && tgt.capped;
+  note.classList.toggle('hidden', !capped);
+  if (capped) note.textContent = t('print.capped', { want: tgt.wantEdge.toFixed(2) });
+  document.getElementById('print-manual-state').classList.toggle('hidden', !!settings.printAuto);
+  box.classList.remove('hidden');
+  // Relief against the layer height: fewer than two layers print as steps on lying faces.
+  const hint = document.getElementById('print-relief-hint');
+  const h = Math.abs(settings.textureHeight || 0);
+  const n = reliefLayers(h, settings.printLayer);
+  const show = settings.amplitude !== 0 && h > 0 && n < 2;
+  hint.classList.toggle('hidden', !show);
+  if (show) hint.textContent = t('print.reliefHint', { h: h.toFixed(2), n: n.toFixed(1), layer: settings.printLayer.toFixed(2) });
+}
+
+function _applyPrintProfile() {
+  _syncPrintUI();
+  if (!currentGeometry) return;
+  let tgt = null;
+  if (settings.printAuto) {
+    const st = _printModelStats();
+    tgt = printTargets({
+      triEdges: st.triEdges, surfaceArea: st.surfaceArea, cap: SUBDIVISION_SAFETY_CAP,
+      nozzle: settings.printNozzle, layer: settings.printLayer, quality: settings.printQuality,
+    });
+    _printApplying = true;
+    try {
+      refineLengthUserSet = true;   // the profile's value is a choice, not the size default
+      settings.refineLength = tgt.edge;
+      refineLenSlider.value = tgt.edge;
+      refineLenVal.value = tgt.edge;
+      maxTriSlider.value = tgt.maxTriangles;
+      maxTriSlider.dispatchEvent(new Event('input', { bubbles: true }));
+    } finally { _printApplying = false; }
+    if (smartResInfo) smartResInfo.classList.add('hidden');
+    checkResolutionWarning();
+    scheduleDisplacementPreviewResolutionRefresh();
+  }
+  _renderPrintInfo(tgt);
+}
+
+function _setPrintAuto(on) {
+  if (settings.printAuto === !!on) { _renderPrintInfo(null); return; }
+  settings.printAuto = !!on;
+  _applyPrintProfile();
+  _autoSaveSettings();
 }
 
 function checkResolutionWarning() {
@@ -5882,6 +6010,7 @@ function applySmartResolution() {
   // chosen edge assumes decimation will land near `recommendedMaxTri`.
   // Setting them in lockstep means clicking Smart twice is idempotent.
   const d = result.diagnostics;
+  settings.printAuto = false;   // Suggest values is a manual choice (Export ▸ Print)
   refineLengthUserSet = true;
   settings.refineLength = result.edge;
   refineLenSlider.value = result.edge;
@@ -5906,6 +6035,7 @@ function applySmartResolution() {
     tris: maxLabel,
   }) + clampedNote;
   smartResInfo.classList.remove('hidden');
+  _applyPrintProfile();
 }
 
 function updateSmartResBtnState() {
@@ -8120,7 +8250,7 @@ const PERSISTED_KEYS = [
   'symmetricDisplacement', 'noDownwardZ', 'smoothBottom', 'harvestFlatFaces', 'harvestTol', 'preserveUntextured', 'colorMode', 'colorBands', 'colorThresholds', 'filamentColors', 'textureSmoothing',
   'mappingBlend', 'seamBandWidth', 'capAngle', 'boundaryFalloff', 'boundaryFalloffCurve',
   'bottomAngleLimit', 'topAngleLimit',
-  'refineLength', 'maxTriangles',
+  'refineLength', 'maxTriangles', 'printNozzle', 'printLayer', 'printQuality', 'printAuto',
   // Cylindrical-mode controls. cylinderCenterX/Y/radius are nullable —
   // null means "fall back to AABB defaults", which is what fresh loads get.
   'snapSeamlessWrap', 'cylinderCenterX', 'cylinderCenterY', 'cylinderRadius',
@@ -8370,6 +8500,12 @@ function applySettingsSnapshot(snap) {
     maxTriSlider.value = snap.maxTriangles;
     maxTriSlider.dispatchEvent(new Event('input', { bubbles: true }));
   }
+  // Export ▸ Print. Projects from before it keep their own two values (manual).
+  settings.printNozzle = Number(snap.printNozzle) || 0.4;
+  settings.printLayer = Number(snap.printLayer) || 0.2;
+  settings.printQuality = snap.printQuality || 'mid';
+  settings.printAuto = snap.printAuto ?? false;
+  _applyPrintProfile();
 
   // Restore saved lock state without invoking the button's click handler
   // (which would mirror scaleU→scaleV and clobber what we just set).
@@ -8547,7 +8683,7 @@ const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   mappingBlend: 1, seamBandWidth: 0.5, capAngle: 20, boundaryFalloff: 0,
   boundaryFalloffCurve: 'ease',
   bottomAngleLimit: 5, topAngleLimit: 0,
-  refineLength: 1, maxTriangles: 750000,
+  refineLength: 1, maxTriangles: 750000, printNozzle: 0.4, printLayer: 0.2, printQuality: 'mid', printAuto: true,
   snapSeamlessWrap: true,
   cylinderCenterX: null, cylinderCenterY: null, cylinderRadius: null,
   cylinderPanelMinimized: false,
