@@ -1409,7 +1409,12 @@ wireEvents();
 scaleUVal.value = fmtScaleVal(posToScale(parseFloat(scaleUSlider.value)));
 scaleVVal.value = fmtScaleVal(posToScale(parseFloat(scaleVSlider.value)));
 
-// Load geometry immediately — don't wait for textures
+// Load geometry immediately — don't wait for textures.
+// The await suspends this module while the handlers above are already wired
+// but the state declared further down is not initialised yet: keep the page
+// from taking clicks, keys and drops until the end of the module (on a slow
+// connection an early click would otherwise fail).
+document.body.inert = true;
 loadDefaultModel(await _defaultModelGeometry());
 
 // Restore the map from the last session: a texture from the user's library if the browser still has
@@ -2279,8 +2284,9 @@ function wireEvents() {
         e.preventDefault();
         _flushUndoCapture();
         const idx = _bowlLinesNow()[k];
+        const before = settings.stampBowlLines;   // a press without a move puts this back
         _freezeBowlLines();
-        _bowlDrag = { k: settings.stampBowlLines.findIndex(l => Math.abs(l.r - idx.r) < 1e-9), off: false };
+        _bowlDrag = { k: settings.stampBowlLines.findIndex(l => Math.abs(l.r - idx.r) < 1e-9), off: false, moved: false, before };
         if (_bowlDrag.k < 0) _bowlDrag.k = k;
         getControls().enabled = false;
         _syncBowlLines();
@@ -3961,6 +3967,7 @@ function _bowlLineDragMove(e) {
   if (!_bowlDrag || !frame?.bowl) return;
   const s = _bowlArcAt(e, frame);
   _bowlDrag.off = s == null;
+  _bowlDrag.moved = true;
   if (s != null) {
     const lines = settings.stampBowlLines;
     const k = _bowlDrag.k;
@@ -3983,6 +3990,15 @@ function _endBowlLineDrag() {
   if (!_bowlDrag) return;
   if (_bowlDragRaf) { cancelAnimationFrame(_bowlDragRaf); _bowlDragRaf = 0; if (_bowlDragEvent) _bowlLineDragMove(_bowlDragEvent); }
   _bowlDragEvent = null;
+  if (!_bowlDrag.moved) {
+    // Only a click: the lines stay as they were (automatic ones keep
+    // following the distribution slider), nothing to undo.
+    settings.stampBowlLines = _bowlDrag.before;
+    _bowlDrag = null;
+    getControls().enabled = true;
+    _syncBowlLines();
+    return;
+  }
   if (_bowlDrag.off) settings.stampBowlLines.splice(_bowlDrag.k, 1);   // dragged off the model: gone
   _bowlDrag = null;
   getControls().enabled = true;
@@ -3999,9 +4015,10 @@ function _addBowlLineAt(e) {
   if (!frame?.bowl) return false;
   const s = _bowlArcAt(e, frame);
   if (s == null) return false;
-  _freezeBowlLines();
-  if (settings.stampBowlLines.length >= 8) return true;
+  if (_bowlLineAt(e) >= 0) return true;            // on a line: that one is dragged, no second one on top
+  if (_bowlLinesNow().length >= 8) return true;    // full
   _flushUndoCapture();
+  _freezeBowlLines();
   const r = bowlWarp(frame.warp, s) / frame.warp.R;
   settings.stampBowlLines.push({ r, s: s / frame.bowl.sTop });
   settings.stampBowlLines.sort((a, b) => a.r - b.r);
@@ -4646,6 +4663,7 @@ function _scaleStampBy(factor) {
   }, 200);
   _syncPreviewMaterial();
   requestRender();
+  _syncOrnamentUI();   // diameter / width fields follow the wheel
   clearTimeout(previewDebounce); previewDebounce = setTimeout(updatePreview, 80);
   _autoSaveSettings();
   _scheduleUndoCapture();
@@ -4707,6 +4725,7 @@ function _endStampDrag() {
   getControls().enabled = true;
   if (stampPlaceActive) toggleStampPlace(false);
   _setStampWheelArmed(true);
+  _syncOrnamentUI();   // a border's height field follows the drag
   updatePreview();
   _autoSaveSettings();
 }
@@ -5527,6 +5546,16 @@ async function handleModelFile(file, stepSettings = null) {
     settings.cylinderRadius  = null;
     settings.stampCenterX = settings.stampCenterY = settings.stampCenterZ = null;  // same for the stamp centre
     settings.stampNormalX = settings.stampNormalY = settings.stampNormalZ = null;
+    // The other layers' placements belonged to the previous model too: their
+    // ornaments start over on the new one instead of hanging in the air.
+    for (let i = 0; i < layers.length; i++) {
+      const ls = i === activeLayer ? null : layers[i].settings;
+      if (!ls) continue;
+      ls.cylinderCenterX = ls.cylinderCenterY = ls.cylinderRadius = null;
+      ls.stampCenterX = ls.stampCenterY = ls.stampCenterZ = null;
+      ls.stampNormalX = ls.stampNormalY = ls.stampNormalZ = null;
+      ls.stampBowlLines = [];
+    }
     _cylSilhouetteCanvas = null;
     _cylSilhouetteGeometry = null;
     _cylSilhouetteAnchor = null;
@@ -9306,3 +9335,6 @@ window.addEventListener('keydown', (e) => {
 _restoreSessionSettings();
 _baselineSnapshot = _captureUndoSnapshot();
 _updateUndoButtons();
+
+// Startup is through: every handler's state exists now (see the await above).
+document.body.inert = false;

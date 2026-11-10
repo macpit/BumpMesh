@@ -90,6 +90,10 @@ A new step in the tool rail for motifs that are placed, not tiled. Every ornamen
 - **Triangle estimate on coarse CAD meshes** — edges more than 64× the target length no longer give a wrong, order-dependent count (Smart resolution, estimated triangles).
 - **Advanced mesh check** — a few very large triangles next to many tiny ones no longer exhaust the memory.
 - **Mirrored 3MF parts** load the right way out.
+- **Ornament fields follow the model** — diameter, width and height update when a stamp is dragged on the model or resized with the wheel.
+- **Height lines** — a click on a line without dragging leaves the lines as they were (automatic ones keep following the distribution slider); a double-click on an existing line no longer adds a second one on top.
+- **New model** — the ornaments of every layer start over on a newly loaded model, not only the active one.
+- **Start** — the page takes clicks and drops once it has finished starting, so an early click on a slow connection no longer fails.
 - **Sharp on every screen** — the view follows the pixel density when the window moves to another monitor or the browser zoom changes.
 
 ### Speed
