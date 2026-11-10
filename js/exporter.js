@@ -249,6 +249,32 @@ function uuid() {
     : '00000000-0000-4000-8000-000000000000';
 }
 
+/**
+ * Where a painted model stands on the plate. A project file is placed exactly
+ * where its build item says (no auto-centring like for a plain mesh), and the
+ * slicers' plate starts at its front-left corner: a model left around the
+ * coordinate origin would hang over that corner, half below the bed. The
+ * mesh keeps its own coordinates (parts exported separately still fit
+ * together); only the build item moves it: its bottom onto the bed, its
+ * middle to the middle of a 256 mm plate — or, when it is wider than that,
+ * as far as it needs to start at the plate's corner.
+ */
+export function plateTransform(vertices) {
+  let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < vertices.length; i += 3) {
+    const x = vertices[i], y = vertices[i + 1], z = vertices[i + 2];
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z;
+  }
+  if (!(maxX >= minX)) return '1 0 0 0 1 0 0 0 1 0 0 0';
+  const PLATE = 256;
+  const tx = Math.max(PLATE / 2, (maxX - minX) / 2) - (minX + maxX) / 2;
+  const ty = Math.max(PLATE / 2, (maxY - minY) / 2) - (minY + maxY) / 2;
+  const f = (v) => String(+v.toFixed(4));
+  return `1 0 0 0 1 0 0 0 1 ${f(tx)} ${f(ty)} ${f(-minZ)}`;
+}
+
 function paintedPackage(vertices, indices, faceLabels) {
   const MESH_ID = 1, ROOT_ID = 2;
   const name = 'Textured';
@@ -279,7 +305,7 @@ function paintedPackage(vertices, indices, faceLabels) {
     `p:UUID="${uuid()}" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>\n` +
     '</components>\n</object>\n</resources>\n' +
     `<build p:UUID="${uuid()}">\n` +
-    `<item objectid="${ROOT_ID}" p:UUID="${uuid()}" printable="1"/>\n` +
+    `<item objectid="${ROOT_ID}" p:UUID="${uuid()}" transform="${plateTransform(vertices)}" printable="1"/>\n` +
     '</build>\n</model>\n';
 
   const modelSettingsXml =

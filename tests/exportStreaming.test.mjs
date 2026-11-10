@@ -58,3 +58,23 @@ test('cancelled 3MF export never initiates a download', async t => {
   await assert.rejects(async () => export3MF(geometry(new Float32Array(9)), 'cancelled.3mf', () => true), /Aborted/);
   assert.equal(getBlob(), undefined);
 });
+
+test('a painted 3MF is placed on the plate by its build item, the mesh keeps its coordinates', async t => {
+  const { plateTransform } = await import('../js/exporter.js');
+  // 120 mm model around the origin, bottom at z = -25: onto the bed, middle at 128 / 128.
+  assert.equal(plateTransform([-60, -60, -25, 60, 60, 25]), '1 0 0 0 1 0 0 0 1 128 128 25');
+  // off-centre model: its own middle moves to the plate's middle
+  assert.equal(plateTransform([100, 200, 0, 140, 260, 10]), '1 0 0 0 1 0 0 0 1 8 -102 0');
+  // wider than 256 mm: starts at the plate's corner
+  assert.equal(plateTransform([-175, -175, -70, 175, 175, 80]), '1 0 0 0 1 0 0 0 1 175 175 70');
+  assert.equal(plateTransform([]), '1 0 0 0 1 0 0 0 1 0 0 0');
+
+  const getBlob = captureDownload(t);
+  const positions = new Float32Array([-10, -10, -5, 10, -10, -5, 0, 10, 5,   -10, -10, -5, 0, 10, 5, -10, 10, 5]);
+  await export3MF(geometry(positions), 'x.3mf', () => false, { faceLabels: new Uint8Array([0, 1]) });
+  const entries = unzipSync(new Uint8Array(await getBlob().arrayBuffer()));
+  const root = strFromU8(entries['3D/3dmodel.model']);
+  assert.match(root, /<item objectid="2"[^>]* transform="1 0 0 0 1 0 0 0 1 128 128 5" printable="1"\/>/);
+  const mesh = strFromU8(entries['3D/Objects/Object_1.model']);
+  assert.match(mesh, /<vertex x="-10" y="-10" z="-5"\/>/);
+});

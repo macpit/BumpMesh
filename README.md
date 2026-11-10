@@ -96,6 +96,7 @@ A new step in the tool rail for motifs that are placed, not tiled. Every ornamen
 - **New model** — the ornaments of every layer start over on a newly loaded model, not only the active one.
 - **Start** — the page takes clicks and drops once it has finished starting, so an early click on a slow connection no longer fails.
 - **Ground grid follows the model** — the grid was fixed at 200 mm; it now reaches past the model (1.6 × its footprint) after scaling or loading a large one, with coarser cells on big grids.
+- **Coloured 3MF stands on the plate** — a 3MF with filament colours carried no position, so the slicer put the model's middle on the plate's front-left corner, half below the bed. The export now places it with its bottom on the bed and its middle at the middle of a 256 mm plate (a wider model starts at the plate's corner); the mesh keeps its own coordinates.
 - **Sharp on every screen** — the view follows the pixel density when the window moves to another monitor or the browser zoom changes.
 
 ### Speed
