@@ -906,7 +906,9 @@ export function updateMaterial(material, layers, settings) {
     u.layerAspect.value[l * 2]     = L ? (L.textureAspectU ?? 1) : 1;
     u.layerAspect.value[l * 2 + 1] = L ? (L.textureAspectV ?? 1) : 1;
     u.layerWrapRepeats.value[l]    = outlineWrapRepeats(rel.u / (L ? (L.textureAspectU ?? 1) : 1));
-    u.layerAdd.value[l]        = L && L.blendAdd ? 1 : 0;
+    // A hidden layer kept for painting (the active one) neither covers the
+    // layers below nor shows its ornament colour — the export leaves it out.
+    u.layerAdd.value[l]        = L && (L.blendAdd || L.hidden) ? 1 : 0;
     const st = L && isStampActive(L) ? stampFrame(L, b) : null;
     u.layerStamp.value[l * 4]     = st ? st.cx : 0;
     u.layerStamp.value[l * 4 + 1] = st ? st.cy : 0;
@@ -926,7 +928,7 @@ export function updateMaterial(material, layers, settings) {
     u.layerStampClear.value[l]        = st ? st.clear : 0;
     u.layerStampRing.value[l * 2]     = st ? st.ringIn : -1;
     u.layerStampRing.value[l * 2 + 1] = st ? st.ringOut : 1;
-    u.layerOrnFil.value[l]            = st && L.stampFilament > 0 ? Math.min(4, L.stampFilament | 0) : 0;
+    u.layerOrnFil.value[l]            = st && !L.hidden && L.stampFilament > 0 ? Math.min(4, L.stampFilament | 0) : 0;
     u.layerStampFade.value[l * 2]     = st ? st.fade : 0;
     u.layerStampFade.value[l * 2 + 1] = st ? (FALLOFF_CURVE_INDEX[st.fadeCurve] ?? 0) : 0;
     // A ring over the bowl has no occlusion map; its arc-length table takes that texture slot.

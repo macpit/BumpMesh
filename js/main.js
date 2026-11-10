@@ -2708,7 +2708,7 @@ function _syncFilamentPaintUI() {
       b.innerHTML = '<span class="fpaint-swatch"></span><span class="fpaint-num"></span>';
       b.addEventListener('click', () => {
         const kk = k + 1;
-        if (active && _filamentPaint === kk && !eraseMode) { _setFilamentPaint(0, null); return; }
+        if (_filamentPaint && exclusionTool && _filamentPaint === kk && !eraseMode) { _setFilamentPaint(0, null); return; }
         _setFilamentPaint(kk, _fpaintTool, false);
       });
       box.appendChild(b);
@@ -3116,6 +3116,10 @@ function _removeLayer(idx) {
     if (idx < activeLayer) activeLayer--;
     _syncTreeLayers();
   }
+  // The layers after the removed one moved down a paint slot: their cached
+  // masks and falloff channels belong to the old slots.
+  _paintCoverCache = new Map();
+  _falloffDirty = true;
   _refreshPaintGeometry();
   _renderLayerStrip();
   updatePreview();
@@ -3178,10 +3182,11 @@ function _previewLayers() {
     list.push({
       texture: entry?.texture ?? null,
       mappingMode: s.mappingMode, scaleU: s.scaleU, scaleV: s.scaleV,
-      offsetU: s.offsetU, offsetV: s.offsetV, rotation: s.rotation,
+      offsetU: s.offsetU, offsetV: s.offsetV, rotation: s.rotation, rotateAroundZ: s.rotateAroundZ,
       // A hidden active layer keeps its slot (for painting) but no relief;
       // a map that is still loading has nothing to show yet either.
       amplitude: (L.visible && entry) ? s.amplitude : 0,
+      hidden: !L.visible,
       symmetricDisplacement: s.symmetricDisplacement,
       mappingBlend: s.mappingBlend, seamBandWidth: s.seamBandWidth, capAngle: s.capAngle,
       cylinderCenterX: s.cylinderCenterX, cylinderCenterY: s.cylinderCenterY, cylinderRadius: s.cylinderRadius,
@@ -8364,6 +8369,9 @@ function applySettingsSnapshot(snap) {
   settings.stampNormalX = snap.stampNormalX ?? null;
   settings.stampNormalY = snap.stampNormalY ?? null;
   settings.stampNormalZ = snap.stampNormalZ ?? null;
+  // The height was set further up, while stampOnce / stampRelief still were
+  // the previous layer's: a flat ornament has no relief, everything else does.
+  settings.amplitude = _ornamentFlat() ? 0 : (settings.invertDisplacement ? -1 : 1) * settings.textureHeight;
   _modeBeforeStamp = null;   // that projection belonged to the previous layer / session
   if (stampPlaceActive && !isStampActive(settings)) toggleStampPlace(false);
   _setStampWheelArmed(false);   // e.g. another layer: the wheel zooms again
@@ -9049,13 +9057,20 @@ function _sameGeo(a, b) {
   return true;
 }
 
+/** Setting values compared by content: arrays (thresholds, colours, height lines) are rebuilt on every apply. */
+function _sameSettingVal(a, b) {
+  if (a === b) return true;
+  if (a && b && typeof a === 'object' && typeof b === 'object') return JSON.stringify(a) === JSON.stringify(b);
+  return false;
+}
+
 function _undoSnapshotsEqual(a, b) {
   if (a === b) return true;
   if (!a || !b) return false;
   if (a.active !== b.active || a.layers.length !== b.layers.length) return false;
   if (!_sameGeo(a.geo, b.geo)) return false;
   for (const k of GLOBAL_KEYS) {
-    if (a.global[k] !== b.global[k]) return false;
+    if (!_sameSettingVal(a.global[k], b.global[k])) return false;
   }
   for (let i = 0; i < a.layers.length; i++) {
     const la = a.layers[i], lb = b.layers[i];
@@ -9064,7 +9079,7 @@ function _undoSnapshotsEqual(a, b) {
     if ((la.mapName || null) !== (lb.mapName || null)) return false;
     if ((la.customId || null) !== (lb.customId || null)) return false;
     for (const k of LAYER_KEYS) {
-      if (la.settings[k] !== lb.settings[k]) return false;
+      if (!_sameSettingVal(la.settings[k], lb.settings[k])) return false;
     }
   }
   return PaintTree.serializedEqual(a.paint, b.paint);

@@ -75,6 +75,13 @@ A new step in the tool rail for motifs that are placed, not tiled. Every ornamen
 - **Start model** — a 120 mm bowl (models/bowl.obj) instead of the 50 mm cube: curved walls, an inside and a flat bottom show more of what textures, masks and colors do.
 - **Cleaner screen** — no popup on export, no support banner or footer links in the sidebar, no welcome popup (Info ▸ What's New opens this README's change list in a new tab, so it is kept in one place); *License & Terms* is written for the fork (AGPL v3, original author, where questions about the fork go) instead of the original site's terms, 3D Preview moved to the viewport footer, larger footer text. The "Define cylinder projection" window shows only in the Mapping and Ornaments steps, where it is used.
 
+### Fixes
+- **Redo works again** — undo steps were compared by reference, so a redo right after an undo did nothing.
+- **Switching layers keeps the texture height** — with a "Flat" ornament in the list, clicking another layer could set that layer's relief to 0 (and give the flat ornament a relief).
+- **Preview matches the export** in four more places: "Rotate around Z" is shown in the editor; a hidden active layer no longer covers the layers below or shows its ornament colour; where two ornaments overlap the upper one wins in the 3MF too; the ornament colour and the height bands run right up to sharp edges instead of stopping half a triangle short.
+- **Removing a layer** no longer hands its painted mask to the layer after it.
+- **Paint filaments** — clicking the active filament chip a second time stops painting.
+
 ### Hosting
 - **GitHub Pages** — every push publishes the app to https://macpit.github.io/BumpMesh/. The imprint names this fork's operator, not CNC Kitchen.
 

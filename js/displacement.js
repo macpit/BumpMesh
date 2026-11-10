@@ -541,6 +541,7 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
       // mirror decisions — never the averaged edge normal.
       const slot = creases ? creases.slotOf[vid] : -1;
       if (slot >= 0) {
+        let best = -1;
         for (let g = 0; g < creases.groups[slot]; g++) {
           const k = creases.start[slot] + g;
           const node = _groupNode(creases, uniqueCount, slot, g);
@@ -557,6 +558,16 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
             tmpNrm.set(blendNrmX[node], blendNrmY[node], blendNrmZ[node]);
             groupGrey[k] = _projectedGrey(imageData.data, imgWidth, imgHeight, tmpPos, tmpNrm,
               lset.mappingMode, settingsWithAspect, bounds);
+          }
+          // The position itself (its height for the colour bands, its
+          // ornament value and cover) follows the group where the pattern is
+          // strongest: colours run up to a sharp edge like in the preview.
+          // The position's move comes from the groups, not from this.
+          const strength = groupGrey[k] * (groupCov ? groupCov[k] : 1);
+          if (strength > best) {
+            best = strength;
+            dispCacheVal[vid] = groupGrey[k];
+            if (dispCacheCov) dispCacheCov[vid] = groupCov[k];
           }
         }
         continue;
@@ -646,7 +657,9 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
           let v = pinned ? 0 : grey * dispCacheCov[vid] * (softMax ? 1 - softMax[vid] : 1);
           // Color spread: this layer's cut level maps onto the export's cut at 0.5.
           v = v < ornThr ? 0.5 * v / ornThr : 0.5 + 0.5 * (v - ornThr) / (1 - ornThr);
-          if (v > ornVal[vid]) { ornVal[vid] = v; ornFil[vid] = ornFilament; }
+          // Like the preview: a later ornament that is on (past the cut) takes
+          // the spot over; below the cut the stronger of the two stays.
+          if (v > 0.5 || v > ornVal[vid]) { ornVal[vid] = v; ornFil[vid] = ornFilament; }
         } else if (li > 0 && !blendAdd && !pinned) {
           let cover = softMax ? 1 - softMax[vid] : 1;
           if (dispCacheCov) cover *= dispCacheCov[vid];
